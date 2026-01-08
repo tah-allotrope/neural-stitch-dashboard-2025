@@ -69,47 +69,65 @@ export default function App() {
             skipEmptyLines: true
         });
 
-        const timeData: any[] = [];
-        const dates = new Set<string>();
+        // 1. Generate All Weeks of 2025 (Mondays)
+        // Helps ensure the timeline starts in Jan even if data starts later.
+        const allWeeks: string[] = [];
+        let d = new Date('2025-01-06'); // First Monday of 2025
+        while (d.getFullYear() === 2025) {
+            allWeeks.push(d.toISOString().split('T')[0]);
+            d.setDate(d.getDate() + 7);
+        }
 
+        // 2. Map CSV Rows to Dates
+        const dataByDate = new Map();
         results.data.forEach((row: any) => {
             const date = row['Date'];
-            if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) return;
-            dates.add(date);
+            if (!date) return;
 
+            // Basic normalization if needed, but assuming YYYY-MM-DD
+            dataByDate.set(date, row);
+        });
+
+        const timeData: any[] = [];
+
+        // 3. Populate Every Week
+        allWeeks.forEach(date => {
+            const row = dataByDate.get(date);
             const dailyConnections: any[] = [];
             const dailyTasks: Record<string, string[]> = {};
 
-            Object.keys(row).forEach(key => {
-                if (key === 'Date') return;
-                const cellContent = row[key];
-                if (!cellContent) return;
+            if (row) {
+                Object.keys(row).forEach(key => {
+                    if (key === 'Date') return;
+                    const cellContent = row[key];
+                    if (!cellContent) return;
 
-                const regex = /\(([^)]+)\)/g;
-                let match;
-                const namesInTask = new Set<string>();
+                    const regex = /\(([^)]+)\)/g;
+                    let match;
+                    const namesInTask = new Set<string>();
 
-                while ((match = regex.exec(cellContent)) !== null) {
-                    match[1].split(/[\/,&]/).forEach(n => {
-                        const cleanName = n.trim();
-                        if (ALLOWED_NAMES.has(cleanName)) {
-                            namesInTask.add(cleanName);
-                            if (!dailyTasks[cleanName]) dailyTasks[cleanName] = [];
-                            dailyTasks[cleanName].push(cellContent);
-                        }
-                    });
-                }
+                    while ((match = regex.exec(cellContent)) !== null) {
+                        match[1].split(/[\/,&]/).forEach(n => {
+                            const cleanName = n.trim();
+                            if (ALLOWED_NAMES.has(cleanName)) {
+                                namesInTask.add(cleanName);
+                                if (!dailyTasks[cleanName]) dailyTasks[cleanName] = [];
+                                dailyTasks[cleanName].push(cellContent);
+                            }
+                        });
+                    }
 
-                const namesArray = Array.from(namesInTask);
-                if (namesArray.length > 1) {
-                    for (let i = 0; i < namesArray.length; i++) {
-                        for (let j = i + 1; j < namesArray.length; j++) {
-                            const pair = [namesArray[i], namesArray[j]].sort();
-                            dailyConnections.push(pair);
+                    const namesArray = Array.from(namesInTask);
+                    if (namesArray.length > 1) {
+                        for (let i = 0; i < namesArray.length; i++) {
+                            for (let j = i + 1; j < namesArray.length; j++) {
+                                const pair = [namesArray[i], namesArray[j]].sort();
+                                dailyConnections.push(pair);
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
 
             timeData.push({
                 date,
@@ -118,9 +136,8 @@ export default function App() {
             });
         });
 
-        timeData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         setParsedData(timeData);
-        setUniqueDates(timeData.map(d => d.date));
+        setUniqueDates(allWeeks);
     }, []);
 
     // --- GRAPH DATA CALC ---
@@ -135,23 +152,47 @@ export default function App() {
         // Let's stick to the previous cumulative logic but FILTER the result based on staff.
 
         const limitIndex = currentDateIndex;
-        const nodesMap = new Map<string, number>();
+        const nodesMap = new Map<string, { val: number, taskCount: number }>(); // Track connection strength AND task count
         const linksMap = new Map<string, number>();
 
         // We accumulate data up to the current date
         for (let i = 0; i <= limitIndex; i++) {
             const dayData = parsedData[i];
+
+            // Accumulate connections
             dayData.connections.forEach((pair: string[]) => {
                 const [source, target] = pair;
-                nodesMap.set(source, (nodesMap.get(source) || 0) + 1);
-                nodesMap.set(target, (nodesMap.get(target) || 0) + 1);
+
+                // Update Node (Connection Strength)
+                const sNode = nodesMap.get(source) || { val: 0, taskCount: 0 };
+                const tNode = nodesMap.get(target) || { val: 0, taskCount: 0 };
+
+                nodesMap.set(source, { ...sNode, val: sNode.val + 1 });
+                nodesMap.set(target, { ...tNode, val: tNode.val + 1 });
 
                 const linkId = `${source}-${target}`;
                 linksMap.set(linkId, (linksMap.get(linkId) || 0) + 1);
             });
+
+            // Accumulate Tasks (Independent of connections)
+            // Note: If a staff has a task but no connection, they might not appear in 'connections' loop.
+            // But usually valid names come from the same cells.
+            Object.keys(dayData.tasks).forEach(staff => {
+                const count = dayData.tasks[staff].length;
+                const node = nodesMap.get(staff) || { val: 0, taskCount: 0 };
+                // Using max(1) for val so they show up even if solitary? 
+                // Or just keep val=0 if no connections? ForceGraph needs links usually?
+                // For now, let's assume nodes only appear if they have connections in this visualization 
+                // OR we can add them here.
+                // The current logic only adds nodes if they exist in a connection pair.
+                // Let's stick to that to avoid floating points unless desired.
+                if (nodesMap.has(staff)) {
+                    nodesMap.set(staff, { ...node, taskCount: node.taskCount + count });
+                }
+            });
         }
 
-        let nodes = Array.from(nodesMap.entries()).map(([id, val]) => ({ id, val }));
+        let nodes = Array.from(nodesMap.entries()).map(([id, data]) => ({ id, val: data.val, taskCount: data.taskCount }));
         let links = Array.from(linksMap.entries()).map(([key, weight]) => {
             const [source, target] = key.split('-');
             return { source, target, weight };
@@ -188,7 +229,7 @@ export default function App() {
 
         myGraph
             .backgroundColor('#050a08')
-            .nodeLabel('id')
+            .nodeLabel((node: any) => `${node.id}: ${node.taskCount || 0} Tasks`) // TOOLTIP UPDATE
             .nodeColor((node: any) => getNodeColor(node.id)) // Dynamic Color
             .nodeVal((node: any) => Math.sqrt(node.val) * 2)
             .nodeResolution(16)
@@ -241,7 +282,7 @@ export default function App() {
                     if (next >= uniqueDates.length) return 0;
                     return next;
                 });
-            }, 200);
+            }, 500); // SLOWED DOWN (was 200)
         }
         return () => clearInterval(interval);
     }, [isPlaying, uniqueDates]);
