@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import ForceGraph3D from '3d-force-graph';
-import { Play, Pause, Calendar, Share2, Info, X, Activity, Globe } from 'lucide-react';
+import { Play, Pause, Calendar, Search, X, Activity, Globe, Filter } from 'lucide-react';
 
-// --- DATA ---
+// --- DATA & CONFIG ---
 const ALLOWED_NAMES = new Set([
     "Tung", "Cong", "Anh", "Hang", "Trang", "Tinh",
     "Marc", "Rob", "Michelle", "Aiden", "Lauren",
@@ -29,15 +29,36 @@ const CSV_CONTENT = `Date,Others,Tara BESS,BizDev & Carbon,GTB ,KBC Industrial,H
 2025-09-15,"- Retail price, FMP, RAG & supply chain data projects (Tinh/Trang/Aiden)","- Check in with Ecoplexus on model feedback (Cong/Tung)\n- Translate and review Vinergo model (Trang/Cong/Rob)","- Quick note/email recap GEAPP event and share materials (Cong/Anh)\n- Big picture KBC pitch deck drafting (all)\n","- Follow up with BIDV on financed emission calculations (Hang/Trang/Tung)\n",,- Follow up with KBC on update for Hai Phong (Tung) ,"- Print with VAT (Trang/Tung)\n- Finalize logistics - ? (Anh/Trang)\n- Finalize content and translation (Anh/all)\n- Prep for video interview ",- Update Tsheets with recent hours for REI (Cong/Anh),,,,,,,,,,,,,,,
 2025-09-08,"- Marketing slidedeck input (Trang/Hang)\n","- Check in with Ecoplexus on model feedback (Cong/Tung)\n","- Brainstorm industrial park project (Marc/Cong/Tung)\n- KBC DC deck sharing (Tung)\n- Follow up lululemon if no response (Tung)\n- Gather BESS insights during GEAPP event (Cong/Anh)","- Share the Scope 1&2 tool (instruction and survey form) to TCB (Hang/Tung/Trang)\n- Share financed emission tool with BIDV (Hang/Tung/others)\n- Prepare for BIDV financed emission tool (Tinh/Trang/Hang)",,- Follow up with KBC on update for Hai Phong (Tung) ,"- Send confirmation email (Trang/Anh)\n- Finalize slides - external, DPPA (Anh/Tung/Aiden/Cong)\n- Start slide translations (Anh/Trang/Tinh)\n- Logistics final - coordinators, tables, Slido, printing (Trang/Anh/Hang/others)","- Faciliate call and site visit for Jinquan (Trang/Anh/Cong)\n- Review offer from SmartSolar (Cong/Rob/Anh/Tung)\n- Share ENS Solution results (Aiden/Trang/Rob)",- Final update for report (Anh/Trang),,,,,,,,,,,,,,`;
 
+// Color Palette
+const COLORS = [
+    "#FF007A", "#00FFFF", "#FFD700", "#FF4500", "#7FFF00",
+    "#00BFFF", "#9932CC", "#FF1493", "#00FA9A", "#FF6347",
+    "#1E90FF", "#DA70D6", "#FFFF00", "#00FF7F", "#FF69B4"
+];
+
+const getNodeColor = (id: string) => {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+        hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % COLORS.length;
+    return COLORS[index];
+};
+
 export default function App() {
-    const graphRef = useRef<HTMLElement>(null);
+    const graphRef = useRef<HTMLDivElement>(null);
     const graphInstance = useRef<any>(null);
 
+    // Data State
     const [parsedData, setParsedData] = useState<any[]>([]);
     const [uniqueDates, setUniqueDates] = useState<string[]>([]);
+
+    // Control State
     const [currentDateIndex, setCurrentDateIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [selectedNode, setSelectedNode] = useState<{ id: string, tasks: string[], date: string } | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
 
     const [stats, setStats] = useState({ nodes: 0, links: 0 });
 
@@ -57,8 +78,6 @@ export default function App() {
             dates.add(date);
 
             const dailyConnections: any[] = [];
-
-            // For Details Panel: Store tasks per person
             const dailyTasks: Record<string, string[]> = {};
 
             Object.keys(row).forEach(key => {
@@ -75,15 +94,12 @@ export default function App() {
                         const cleanName = n.trim();
                         if (ALLOWED_NAMES.has(cleanName)) {
                             namesInTask.add(cleanName);
-
-                            // Store task info
                             if (!dailyTasks[cleanName]) dailyTasks[cleanName] = [];
-                            dailyTasks[cleanName].push(cellContent); // Store raw task content or key
+                            dailyTasks[cleanName].push(cellContent);
                         }
                     });
                 }
 
-                // Pairwise connections
                 const namesArray = Array.from(namesInTask);
                 if (namesArray.length > 1) {
                     for (let i = 0; i < namesArray.length; i++) {
@@ -111,10 +127,18 @@ export default function App() {
     const graphData = useMemo(() => {
         if (!parsedData.length) return { nodes: [], links: [] };
 
+        // 1. Time Filtering (Sliding Window: Show specific week only? Or Cumulative?)
+        // User asked for "filter data... active during that time window". 
+        // Let's make it Cumulative up to that point to keep the network growing, 
+        // BUT highlight/filter based on selection.
+        // Actually, "Active during that time window" often implies a snapshot.
+        // Let's stick to the previous cumulative logic but FILTER the result based on staff.
+
         const limitIndex = currentDateIndex;
         const nodesMap = new Map<string, number>();
         const linksMap = new Map<string, number>();
 
+        // We accumulate data up to the current date
         for (let i = 0; i <= limitIndex; i++) {
             const dayData = parsedData[i];
             dayData.connections.forEach((pair: string[]) => {
@@ -127,14 +151,26 @@ export default function App() {
             });
         }
 
-        const nodes = Array.from(nodesMap.entries()).map(([id, val]) => ({ id, val }));
-        const links = Array.from(linksMap.entries()).map(([key, weight]) => {
+        let nodes = Array.from(nodesMap.entries()).map(([id, val]) => ({ id, val }));
+        let links = Array.from(linksMap.entries()).map(([key, weight]) => {
             const [source, target] = key.split('-');
             return { source, target, weight };
         });
 
+        // 2. Staff Filtering
+        if (selectedStaff.length > 0) {
+            // Filter nodes: Only selected staff OR staff connected to them?
+            // "Display only those nodes" -> strict filter + their history.
+            nodes = nodes.filter(n => selectedStaff.includes(n.id));
+
+            // Filter connections: Only if BOTH are in selected staff? 
+            // Or if ONE is in selected staff? usually "Both" for strict, "One" for egocentric.
+            // Let's go strict for "Display only those nodes".
+            links = links.filter(l => selectedStaff.includes(l.source) && selectedStaff.includes(l.target));
+        }
+
         return { nodes, links };
-    }, [parsedData, currentDateIndex]);
+    }, [parsedData, currentDateIndex, selectedStaff]);
 
     useEffect(() => {
         setStats({ nodes: graphData.nodes.length, links: graphData.links.length });
@@ -147,33 +183,28 @@ export default function App() {
     useEffect(() => {
         if (!graphRef.current) return;
 
-        // ForceGraph3D acts on the DOM node
-        const myGraph = ForceGraph3D()(graphRef.current);
+        const myGraph = (ForceGraph3D as any)()(graphRef.current);
         graphInstance.current = myGraph;
 
         myGraph
             .backgroundColor('#050a08')
             .nodeLabel('id')
-            .nodeColor(() => '#0df280')
+            .nodeColor((node: any) => getNodeColor(node.id)) // Dynamic Color
             .nodeVal((node: any) => Math.sqrt(node.val) * 2)
             .nodeResolution(16)
-            .nodeOpacity(0.9)
-            .linkColor(() => 'rgba(13, 242, 128, 0.4)')
+            .nodeOpacity(1)
+            .linkLabel(link => `Strength: ${link.weight}`)
+            .linkColor(() => 'rgba(255, 255, 255, 0.2)')
             .linkWidth((link: any) => Math.sqrt(link.weight) * 0.5)
             .linkDirectionalParticles(2)
-            .linkDirectionalParticleSpeed((d: any) => d.weight * 0.001)
+            .linkDirectionalParticleSpeed((d: any) => d.weight * 0.002)
             .onNodeClick((node: any) => {
-                // Focus camera?
-                // Scale up logic?
-                // Show Details Panel
-
-                // Aggregate tasks for this person up to current date
                 const tasks: string[] = [];
                 for (let i = 0; i <= currentDateIndex; i++) {
                     const dayTasks = parsedData[i]?.tasks[node.id];
                     if (dayTasks) tasks.push(...dayTasks);
                 }
-                const uniqueTasks: string[] = Array.from(new Set(tasks)); // dedupe
+                const uniqueTasks = Array.from(new Set(tasks));
 
                 setSelectedNode({
                     id: node.id,
@@ -182,14 +213,10 @@ export default function App() {
                 });
             });
 
-        // Cleanup?
         return () => {
-            // 3d-force-graph doesn't have a clean dispose method easily accessible, 
-            // but removing the innerHTML of graphRef works in vanilla.
             if (graphRef.current) graphRef.current.innerHTML = '';
         };
     }, []);
-    // Run once on mount. We update data via the other useEffect.
 
     // --- RESIZE ---
     useEffect(() => {
@@ -221,97 +248,124 @@ export default function App() {
 
     const currentDate = uniqueDates[currentDateIndex] || 'Loading...';
 
+    // --- HELPERS ---
+    const toggleStaffSelection = (name: string) => {
+        setSelectedStaff(prev =>
+            prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+        );
+    };
+
+    const filteredNames = Array.from(ALLOWED_NAMES).filter(n =>
+        n.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
     return (
         <div className="relative w-full h-screen overflow-hidden text-white font-sans selection:bg-[#0df280] selection:text-black">
 
-            {/* 3D Container - Z-0 */}
+            {/* 3D Container */}
             <div ref={graphRef} className="absolute inset-0 z-0" />
 
-            {/* UI Overlay - Z-10 */}
-            {/* Header */}
-            <div className="absolute top-6 left-6 z-10">
-                <div className="glass-panel p-6 rounded-2xl w-80 md:w-96 hover:scale-[1.01] transition-transform duration-300">
-                    <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-4">
+            {/* HEADER & FILTER */}
+            <div className="absolute top-6 left-6 z-10 flex flex-col gap-4 max-h-[80vh]">
+                {/* Title Card */}
+                <div className="glass-panel p-5 rounded-2xl w-80 md:w-96">
+                    <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
-                            <Activity className="text-[#0df280] w-7 h-7" />
+                            <Activity className="text-[#0df280] w-6 h-6" />
                             <div>
-                                <h1 className="text-xl font-bold tracking-wider">Neural<span className="text-[#0df280]">Sync</span></h1>
-                                <p className="text-[10px] text-gray-400 uppercase tracking-widest">Network Force Explorer</p>
+                                <h1 className="text-lg font-bold tracking-wider">Neural<span className="text-[#0df280]">Sync</span></h1>
+                                <p className="text-[10px] text-gray-400 uppercase tracking-widest">Network HUD</p>
                             </div>
                         </div>
-                        <div className="w-2 h-2 rounded-full bg-[#0df280] animate-pulse shadow-[0_0_10px_#0df280]"></div>
+                        <div className="w-2 h-2 rounded-full bg-[#0df280] animate-pulse"></div>
+                    </div>
+                </div>
+
+                {/* Search / Filter */}
+                <div className="glass-panel p-4 rounded-2xl w-80 md:w-96">
+                    <div className="relative mb-3">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Filter Staff..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs focus:outline-none focus:border-[#0df280] transition-colors"
+                        />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-white/5 rounded-lg p-3 border border-white/5 hover:bg-white/10 transition-colors">
-                            <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Active Nodes</p>
-                            <p className="text-2xl font-mono font-bold text-white">{stats.nodes}</p>
-                        </div>
-                        <div className="bg-white/5 rounded-lg p-3 border border-white/5 hover:bg-white/10 transition-colors">
-                            <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Synapses</p>
-                            <p className="text-2xl font-mono font-bold text-[#0df280]">{stats.links}</p>
-                        </div>
+                    <div className="mb-2 flex flex-wrap gap-2">
+                        {selectedStaff.map(name => (
+                            <button
+                                key={name}
+                                onClick={() => toggleStaffSelection(name)}
+                                className="flex items-center gap-1 text-[10px] bg-[#0df280] text-black px-2 py-1 rounded-full font-bold hover:bg-white transition-colors"
+                            >
+                                {name} <X className="w-3 h-3" />
+                            </button>
+                        ))}
+                        {selectedStaff.length > 0 && (
+                            <button onClick={() => setSelectedStaff([])} className="text-[10px] text-gray-400 hover:text-white underline p-1">
+                                Clear All
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
+                        {filteredNames.map(name => (
+                            <button
+                                key={name}
+                                onClick={() => toggleStaffSelection(name)}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center gap-2 hover:bg-white/5 transition-colors ${selectedStaff.includes(name) ? 'bg-white/10 text-[#0df280]' : 'text-gray-300'}`}
+                            >
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getNodeColor(name) }}></span>
+                                {name}
+                            </button>
+                        ))}
                     </div>
                 </div>
             </div>
 
-            {/* Top Right Tag */}
-            <div className="absolute top-6 right-6 z-10">
-                <div className="glass-panel px-4 py-2 rounded-full flex items-center gap-3 animate-pulse border-[#0df280]/30">
-                    <span className="w-2 h-2 rounded-full bg-[#0df280]"></span>
-                    <span className="text-xs font-mono text-[#0df280] tracking-widest">LIVE DATA: 2025</span>
-                </div>
-            </div>
+            {/* BOTTOM TIMELINE */}
+            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[90%] md:w-[600px] z-10">
+                <div className="glass-panel rounded-full px-6 py-4 flex items-center gap-6">
+                    <button
+                        onClick={() => setIsPlaying(!isPlaying)}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-white text-black' : 'bg-[#0df280] text-black hover:scale-110'}`}
+                    >
+                        {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+                    </button>
 
-            {/* Bottom Timeline Control */}
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] md:w-2/3 lg:w-1/2 z-10">
-                <div className="glass-panel rounded-2xl p-5">
-                    <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-bold text-[#0df280] uppercase tracking-wider flex items-center gap-2">
-                            <Calendar className="w-4 h-4" />
-                            Timeline Control
-                        </span>
-                        <span className="text-sm font-mono font-bold text-white bg-white/10 px-3 py-1 rounded border border-white/5">
-                            {currentDate}
-                        </span>
-                    </div>
+                    <div className="flex-1">
+                        <div className="flex justify-between items-baseline mb-2">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Timeline</span>
+                            <span className="text-sm font-mono font-bold text-[#0df280]">{currentDate}</span>
+                        </div>
 
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => setIsPlaying(!isPlaying)}
-                            className={`flex items-center justify-center w-12 h-12 rounded-full transition-all shadow-[0_0_15px_rgba(13,242,128,0.2)] ${isPlaying ? 'bg-white text-black hover:bg-gray-200' : 'bg-[#0df280] text-black hover:bg-[#4ffcb0]'
-                                }`}
-                        >
-                            {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current pl-1" />}
-                        </button>
-
-                        <div className="flex-1 relative group">
+                        <div className="relative h-6 flex items-center">
                             <input
                                 type="range"
                                 min="0"
                                 max={uniqueDates.length - 1 || 0}
                                 value={currentDateIndex}
-                                onChange={(e) => {
-                                    setCurrentDateIndex(parseInt(e.target.value));
+                                onChange={(e) => setCurrentDateIndex(parseInt(e.target.value))}
+                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                                style={{
+                                    background: `linear-gradient(to right, #0df280 0%, #0df280 ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) 100%)`
                                 }}
-                                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer group-hover:h-3 transition-all"
                             />
-                            <div className="flex justify-between mt-2 text-[10px] text-gray-500 font-mono">
-                                <span>JAN 2025</span>
-                                <span>DEC 2025</span>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* Details Panel - The "Heads-Up" Improvement */}
+            {/* DETAILS PANEL */}
             {selectedNode && (
                 <div className="absolute top-0 right-0 h-full w-full md:w-[400px] z-20 glass-panel border-l border-white/10 animate-slide-in flex flex-col">
                     <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20">
                         <div>
                             <p className="text-xs text-[#0df280] uppercase tracking-widest mb-1">Personnel Record</p>
-                            <h2 className="text-3xl font-bold font-mono">{selectedNode.id}</h2>
+                            <h2 className="text-3xl font-bold font-mono" style={{ color: getNodeColor(selectedNode.id) }}>{selectedNode.id}</h2>
                         </div>
                         <button
                             onClick={() => setSelectedNode(null)}
@@ -325,24 +379,7 @@ export default function App() {
                         <div className="mb-6">
                             <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center gap-2">
                                 <Globe className="w-4 h-4 text-[#0df280]" />
-                                Network Impact
-                            </h3>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div className="p-3 bg-white/5 rounded border border-white/5">
-                                    <span className="block text-xl font-bold text-white">{selectedNode.tasks.length}</span>
-                                    <span className="text-[10px] text-gray-500 uppercase">Tasks Logged</span>
-                                </div>
-                                <div className="p-3 bg-white/5 rounded border border-white/5">
-                                    <span className="block text-xl font-bold text-[#0df280]">Active</span>
-                                    <span className="text-[10px] text-gray-500 uppercase">Current Status</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div>
-                            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center gap-2">
-                                <Info className="w-4 h-4 text-[#0df280]" />
-                                Activity Log (YTD)
+                                Validated Skills / Tasks
                             </h3>
                             <div className="space-y-3">
                                 {selectedNode.tasks.map((task, idx) => (
@@ -363,3 +400,16 @@ export default function App() {
         </div>
     );
 }
+
+// Global styles for slider track
+const style = document.createElement('style');
+style.innerHTML = `
+  input[type=range]::-webkit-slider-thumb {
+    box-shadow: 0 0 15px #0df280;
+    transition: transform 0.1s;
+  }
+  input[type=range]:active::-webkit-slider-thumb {
+    transform: scale(1.3);
+  }
+`;
+document.head.appendChild(style);
