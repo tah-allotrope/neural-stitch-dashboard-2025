@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Sync | 3D Collaboration Network</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1" rel="stylesheet" />
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0df280',
+                        'bg-dark': '#050a08',
+                        'glass-border': 'rgba(255, 255, 255, 0.08)',
+                        'glass-bg': 'rgba(17, 24, 20, 0.75)'
+                    },
+                    fontFamily: {
+                        sans: ['Space Grotesk', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Libraries (No Import Maps, Standard Script Tags) -->
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/3d-force-graph"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050a08; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+        ::-webkit-scrollbar-thumb { background: rgba(13, 242, 128, 0.2); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(13, 242, 128, 0.5); }
+
+        /* Glassmorphism Utilities */
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Range Slider Styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #0df280;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(13, 242, 128, 0.8);
+            border: 2px solid #050a08;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+
+        /* Animations */
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 5px rgba(13, 242, 128, 0.5); }
+            50% { box-shadow: 0 0 15px rgba(13, 242, 128, 0.8); }
+        }
+        .neon-text { text-shadow: 0 0 8px rgba(13, 242, 128, 0.6); }
+        .neon-border { box-shadow: 0 0 5px rgba(13, 242, 128, 0.3); }
+        
+        #graph-container canvas { display: block; }
+    </style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="text-white font-sans antialiased">
+
+    <!-- 3D Graph Container -->
+    <div id="graph-container" class="absolute inset-0 z-0"></div>
+
+    <!-- UI Overlay Wrapper -->
+    <div class="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 md:p-6">
+        
+        <!-- Header / Status -->
+        <div class="flex justify-between items-start w-full pointer-events-auto">
+            <div class="glass-panel rounded-2xl p-5 w-80 md:w-96 transform transition-all hover:scale-[1.01]">
+                <div class="flex items-center justify-between mb-4 border-b border-white/10 pb-4">
+                    <div class="flex items-center gap-3">
+                        <span class="material-symbols-outlined text-primary neon-text" style="font-size: 28px;">hub</span>
+                        <div>
+                            <h1 class="text-xl font-bold tracking-wider">Neural<span class="text-primary">Sync</span></h1>
+                            <p class="text-xs text-gray-400 uppercase tracking-widest">Network Force Explorer</p>
+                        </div>
+                    </div>
+                    <div class="w-2 h-2 rounded-full bg-primary animate-[pulse-glow_2s_infinite]"></div>
+                </div>
+
+                <!-- Stats -->
+                <div class="grid grid-cols-2 gap-3 mb-6">
+                    <div class="bg-white/5 rounded-lg p-3 border border-white/5">
+                        <p class="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Active Nodes</p>
+                        <p id="stat-nodes" class="text-2xl font-mono font-bold text-white">0</p>
+                    </div>
+                    <div class="bg-white/5 rounded-lg p-3 border border-white/5">
+                        <p class="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Synapses</p>
+                        <p id="stat-links" class="text-2xl font-mono font-bold text-primary">0</p>
+                    </div>
+                </div>
+
+                <!-- Debug Log -->
+                <div class="mb-2">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-[10px] uppercase text-gray-500 font-bold">System Log</span>
+                        <span id="log-status" class="text-[10px] text-primary">Ready</span>
+                    </div>
+                    <div id="debug-console" class="h-24 overflow-y-auto bg-black/40 rounded border border-white/5 p-2 font-mono text-[10px] text-gray-300 custom-scrollbar">
+                        <p class="text-primary">> System initialized...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Right Controls -->
+            <div class="glass-panel px-4 py-2 rounded-full flex items-center gap-3 animate-[pulse-glow_4s_infinite]">
+                <span class="w-2 h-2 rounded-full bg-primary"></span>
+                <span class="text-xs font-mono text-primary tracking-widest">LIVE DATA: 2025 WORKPLAN</span>
+            </div>
+        </div>
+
+        <!-- Bottom Controls -->
+        <div class="flex flex-col md:flex-row items-end md:items-center justify-between gap-4 pointer-events-auto w-full">
+            
+            <!-- Timeline Controller -->
+            <div class="glass-panel w-full md:w-2/3 lg:w-1/2 rounded-2xl p-5 mb-safe">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-2">
+                        <span class="material-symbols-outlined text-sm">calendar_month</span>
+                        Timeline Control
+                    </span>
+                    <span id="current-date-display" class="text-sm font-mono font-bold text-white bg-white/10 px-2 py-1 rounded">Loading...</span>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <button id="play-btn" class="flex items-center justify-center w-10 h-10 rounded-full bg-primary text-black hover:bg-[#4ffcb0] transition-colors shadow-[0_0_15px_rgba(13,242,128,0.4)]">
+                        <span id="play-icon" class="material-symbols-outlined">play_arrow</span>
+                    </button>
+                    
+                    <div class="flex-1 relative">
+                        <input type="range" id="timeline-slider" min="0" max="100" value="0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                        <div class="flex justify-between mt-2 text-[10px] text-gray-500 font-mono">
+                            <span>JAN 2025</span>
+                            <span>DEC 2025</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="glass-panel px-6 py-4 rounded-xl flex gap-6 hidden md:flex">
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-primary border border-white/20"></span>
+                    <span class="text-xs text-gray-300">Staff</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-8 h-0.5 bg-gradient-to-r from-primary/10 via-primary to-primary/10"></span>
+                    <span class="text-xs text-gray-300">Collaboration</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIGURATION & STATE ---
+        const ALLOWED_NAMES = new Set([
+            "Tung", "Cong", "Anh", "Hang", "Trang", "Tinh", 
+            "Marc", "Rob", "Michelle", "Aiden", "Lauren", 
+            "Erik", "Ethan", "Bob", "Sam", "Svetlana"
+        ]);
+        
+        const STATE = {
+            parsedData: [], // { date, connections: [[name, name], ...] }
+            uniqueDates: [],
+            currentDateIndex: 0,
+            isPlaying: false,
+            playInterval: null,
+            graphData: { nodes: [], links: [] }
+        };
+
+        const Graph = ForceGraph3D()
+            (document.getElementById('graph-container'));
+
+        // --- 2. RAW CSV DATA (EMBEDDED) ---
+        // This is the raw content provided in the prompt.
+        const CSV_CONTENT = `Date,Others,Tara BESS,BizDev & Carbon,GTB ,KBC Industrial,Hai Phong Green,CEBA Academy,REI & Peak,CPI ,DOS/NREL ,NIRAS/GEAPP,,,,,,,,,,,,
+2025-12-29,"- 2025 reflect and planning for New Year \n- 4 days holidays ","- Review Ecoplexus report and model (all) \n- BESS case study on Canvas for Tara (Anh/Cong)",- Follow with VIOT on Amaccao and Verra posting (Tung/Hang),"- Update financed emission report with BIDV feedback (Hang/Trang))\n- Cont finalize reports for TCB (Hang/Trang/Anh)\n",,- Cont. pending further update from Loan after call (Hang/Tung),,,,,,,,,,,,,,,,,
+2025-12-22,- Tinh discussion for early 2026,"- Final simulate Ecoplexus project using new model and test validity (Cong/Tung/Rob)\n- Share Ecoplexus report for internal review (Cong/Tung/Rob)\n- BESS case study on Canvas for Tara (Anh/Cong)","- Arrange meeting with Tara if possible (Tung)\n- Follow up with VIOT on Amaccao (Hang/Marc)\n- Follow up with Allcot (now Kcarbon X) on NDA (Hang/Tung)\n","- Cont.. finalize reports for BIDV (Hang/Tung/Anh)\n- Cont. summarize key changes for PCAF new versions (Hang/Trang/Tung)\n\n",- Finalize term sheet penalty and legal structure (Marc/Bob/Ethan),- Pending further update from Loan after call (Hang/Tung),,,,,,,,,,,,,,,,,
+2025-12-15,- Leave plan for Xmas and New Year (all),"- Cont.. simulate Ecoplexus project using new model and test validity - private grid sale (Cong/Tung/Rob)\n- Final week before thesis submission (Tinh/all)\n- BESS case study on Canvas for Tara (Lauren/Anh/Cong)","- Share NDA with VinaCarbon (Tung/Lauren)\n- Follow up with VIOT on next steps (Hang/Marc)\n- Prep and summarize Tara meeting (Tung/all)\n- Finalize CPI Lab proposal (all)\n- Prep and summarize BII meeting (Tung/Cong)h","- Cont. finalize reports for BIDV and TCB (Hang/Tung/Anh)\n- Scope 3 nonfinance emission request (Hang/Tung)\n- Summarize key changes for PCAF new versions (Hang/Trang/Tung)\n",- Translate KBC slides + send back materials to BD team (Anh/Trang/Tung),- Cont.. update with DAE new contact and report progress with KBC (Tung/Hang),"- Finalize pitch deck and question list for consultation (Aiden/Michelle/Anh)\n- Send Corrina interview analysis by 18th Dec (Anh/Trang)\n- Prep and execute CEBA consultations (Anh/Aiden/Michelle)","- Update Tsheet & invoice (all)\n- Next steps with ENS (Rob/all)",,,,,,,,,,,,,,,
+2025-12-08,- Hang & Trang domain presentation (Hang/Trang),"- Cont. simulate Ecoplexus project using new model and test validity - private grid sale (Cong/Tung/Rob)\n- Cont. Tinh final sprint on thesis (Tinh/all)\n- Presentation for Tara (Tung/Cong/Anh)\n- Cont. test fundamental validity of new Excel model (Rob/Tung/Cong)","- Support with Lab CPI proposal (Michelle/all)\n- Visit KBC HO and facilicate next steps (Marc/Hang/Anh/Trang)\n- Next steps with Amaccao, Idemitsu, Vinfast and Vinacarbon (Marc/Tung/Hang)\n- Schedule meeting with Yen before holiday (Tung/Hang/Anh)","- Review financed emission changes after PCAF update (Hang/Tung/Anh)\n- Finalize reports for BIDV and TCB (Hang/Tung/Anh)\n- Presentation for Tara (Tung/Hang)\n","- Review term sheet and connect with sales team for pipelining (Marc/all)\n",- Cont. update with DAE new contact and report progress with KBC (Tung/Hang),"- Review and finalize for Michelle (Tung)\n- Draft  and share visual presentation of cohort concept (Anh/Aiden/Michelle)\n- Outreach list, consultation questions (Anh/Aiden/Michelle)",- BESS system RFI (Anh/Cong/Rob),,,,,,,,,,,,,,,
+2025-12-01,"- Trang out on Monday due to Influenza A\n- Update on Perplexity invoicing (Tung)\n- Marc visiting HCMC and HN this/next week (all)","- Share EYA results with Ecoplexus and Tara (Tung)\n- Simulate Ecoplexus project using new model and test validity - private grid sale (Cong/Tung/Rob)\n- Test fundamental validity of new Excel model (Rob/Tung/Cong)\n- Cont. draft outline for Ecplx reporting - PPT (Anh/Tung/Cong)\n- Tinh final sprint on thesis (all)b","- Marc visit in HCMC - Vinacarbon outreach, GreenCarbon, KBC (Tung/Cong/Hang)\n- Marc visit in Hanoi - Mr. Tho, WtE (Hang/Anh/Tung)\n- Finalize PUR carbon proposal dev (Marc/Aiden/Lauren)\n- Good Fashion Fund briefing and follow up (Michelle/all)\n- RFP for carbon project Sing-VN - email internal (Hang/Tung)\n","- PCAF coordination for next steps - time, letter, discount (Hang/Tung)\n- Finalize report for BIDV financed emission assessment (Hang/Anh/Tung)\n- Share recent reports internally with Michelle and Lauren for TCB/ BIDV (Hang/Tung)\n- Find and share corporate transition plan with Lauren and Michelle (Anh/Tung)\n- SLL coordination with BIDV for next steps (Anh/Tung)\n- Emission intensity database, financed emission to risk cal (Trang/Tinh/Tung)","- Lunch with KBC key contacts and align on final details (Marc/Cong/Tung)\n- Cont... build upon KBC IP & tenants database (Trang/Tinh/Tung)",- Update with DAE new contact and report progress with KBC (Tung/Hang),"- Draft visual presentation of cohort concept (Anh/Aiden/Michelle)\n- Begin outreach with selected brands and suppliers (Anh/Aiden/Michelle) - delay til 15th\n- Review TAM’s outline (Anh/all) - Dec 5th\n","- Next steps with ENS Foam (Rob/Anh)\n- Preparation for Oliver's trip? (Rob/all)\n- Update Tsheet (Tung/Cong/Trang)",,,,,,,,,,,,,,,
+2025-11-24,"- Tung on leave Friday\n- Update legal register (Trang)","- Finalize and share EYA with Ecoplexus and Tara - parameters, Michelle inputs (Tung/Anh/Cong)\n- Note on EYA report = interim report/appendix (Tung/Michelle)\n- Update and customize model for 2-part tariff, utility solar and Ecoplexus (Cong/Tung/Rob)\n- Tinh thesis progress check-in (Tinh/Tung/Cong)","- Share C&I engagement options with Michelle for next step (Tung)\n- Standby for Seraphinn WtE (Hang/Tung)\n- IKI grant opportunity discussion (Hang/Michelle/Lauren)","- SLL confirmation (Lauren/Michelle/Anh)\n- Preparation for PCAF (Tung/Hang/Anh)\n- Finalize reports for BIDV non financed and financed emission (Hang/Trang/Tung)\n- Climate intel for 2026 - emission intensity database, financed emission to risk cal (Trang/Tinh/Tung)","- Plan meetings for Marc visit (Tung/Cong)\n- Cont.. build upon KBC IP & tenants database (Trang/Tinh/Tung)",- Final engage with DAE and report progress with KBC (Tung/Hang),"- Follow up Goertek with email (Cong/Anh)\n- Finalize timeline and list of questions for sharing (Anh/Aiden/Lauren)\n- Further outreach for 6 months interview (Anh/Trang)\n- SOW Q4: List of 8-10 brands/suppliers to conduct outreach (Anh)\n- Draft Concept Note and Pitch Deck (Anh/Aiden/Lauren)\n- Review TAM’s outline (Anh/all)","- Engage other vendors for ENS Foam - Stride, others (Anh/Rob)",,,,,,,,,,,,,,,
+2025-11-17,baby shower when??? - :)) not soon,"- Cont. review EYA results, cover and provide feedback (Rob/Tung/Anh)\n- Finalize EYA cover page for internal review (Cong/Anh)\n- Update and customize model for utility solar and Ecoplexus (Cong/Tung/Rob)\n- Draft outline for Ecplx reporting - PPT (Anh/Tung/Cong)","- GAP proposal for VN and IN (Michelle/Rob/Tung)\n- Seraphinn WtE site visit prep - tentative (Hang/Tung)\n- PUR carbon proposal dev (Hang/Michelle/Aiden)","- BIDV & PCAF facilitation where required (Hang/Tung)\n- BIDV & SLL alignment on next steps & deliverables (Anh/Tung/Hang)\n- Draft reports progress for November deadline? (Hang/Tung/Anh)\n- Brainstorm and test emission intensity relevance to Vietnam economy - CEDA database (Hang/Trang/Tinh)","- Finalize thesis first draft for submission with supervisor (Tinh/Tung)\n- Cont. build upon KBC IP & tenants database (Trang/Tinh/Tung)\n- Cont.. modelling update for 2-part tariff opt (Tung/Rob/Cong)",- Cont... engage with DAE for official confirmation (Hang/Tung),"- CEBA new SOW discussion and planning - timeline to be shared with CEBA (all)\n- Share holidays in Jan and Feb 2026 with CEBA (Anh/Tung)\n- Create draft list of questions for engagement - flag overlap with 6-months (Anh/Michelle/Aiden/Lauren)\n- Interview request email (Anh/Trang)","- Reach out Coco, Vu Phong for Rob (Anh/Rob)\n- Cont.. coordinate with Jinquan for next steps - SmartSolar, JQ, REI (Anh/Cong)",,,,,,,,,,,,,,,
+2025-11-10,"- Co-meeting space options (Trang/Hang)\n- Financed emission tool zfolio/Sweep/Others... (Hang/Trang)v","- Review EYA results and provide feedback (Rob/Tung/Anh)\n","- Prep for GENCO3 meeting? (Cong/Tung/Anh)\n- Internalize Seth's comments and follow up VIOT (Hang/Aiden/Tung)\n- Tinh progress on first draft and questions on data (Tinh/Tung/Cong)\n- First meeting for internal carbon team (Erik/Hang/Aiden)","- Response to BIDV feedback on report and tool (Hang/Trang/Anh)\n- Prepare for meeting with TCB for financed emission calculation tool on Tue (Hang/Trang/Anh)\n- Prepare for meeting with BIDV on emission and SLL (Hang/Anh/Tung)\n- Prepare for Scope 3 non financed calculation tool for BIDV (Hang/Trang/Anh)","- 3rd meeting on arrangement between AP and KBC (Marc/Ethan)\n- Build upon KBC IP & tenants database with further info on brands & RTS (Trang/Tinh/Tung)\n- Cont. modelling update for 2-part tariff opt (Tung/Rob/Cong)","- Cont.. engage with DAE for official confirmation (Hang/Tung)\n- Cont. brainstorm for in-person meeting/workshop KBC/Tara (Tung/Anh/all)","- Follow up with CEBA 6-month tasks (Anh/Trang) \n- Reach out to Tina-Luxshare (Trang/Anh)\n- Survey completion reminder email by 14th Nov (Anh/Trang)\n","- Rooftop solar companies list for ENS Foam (Anh/Cong/Rob)\n- Cont. coordinate with Jinquan for next steps - SmartSolar, JQ, REI (Anh/Cong)",,,,,,,,,,,,,,,
+2025-11-03,"- 2026 workplan changes? (all)\n- Co-working space costly (Trang/Hang)","- Finalize Emivest Slides (Trang/Cong/Tung)\n- Share Emivest report and engage Tara/Nami for update (Tung/Cong/Anh)\n- Plan project layout, initial steps and estimate timeline for Ecplx modelling - Autocad, pvsyst (Cong/Tung/Tinh)","- Next steps for carbon opps - WtE, Terviva, BPP, PUR (Tung/Hang)\n- Cont. Hai Ha IP and mill factories desk research for Gap Inc (Trang/Anh/Tung)\n- Tinh progress on literature review and methodology before first submission (Tinh/Tung)","- Rework monthly sheet (Tung)\n- Cont. data collection with BIDV for November reporting (Hang/Tung/Anh)\n- Update and engage TCB with revised tool (Hang/Trang/Anh)\n- Draft and engage BIDV with new SLL ideas (Anh/Tung)\n","- Add brands details where possible to IP list (Trang/Tinh/Tung)\n- Wait for further update from Marc and Alan on Singapore entity (all)\n- Modelling update for 2-part tariff opt (Tung/Rob/Cong)","- Cont. engage with DAE for official confirmation (Hang/Tung)\n- Brainstorm for in-person meeting/workshop KBC/Tara (Tung/Anh/all)","- Submit online academy translation validation (Anh/Cong/Hang)\n- Check proposal and finalize monthly sheet (Anh/Tung)","- Coordinate with Jinquan for next steps - SmartSolar, JQ, REI (Anh/Cong)",,,,,,,,,,,,,,,
+2025-10-27,"- Legal register update - DPPA draft, BESS (Trang)\n- Trang side project (Trang/Tung)","- Update and share final analysis and reporting for Emivest for internal review (Cong/Tung/Anh)\n- Engage Ecplx for data collection and modelling feedback - delay & timing (Tung/Cong)\n- Nami & Emivest engagement on updated modelling (Cong/Tung/Michelle)\n- Brainstorm for in-person meeting/workshop (Tung/Anh/all)\n- Emivest Slides (Trang/Cong/Tung)","- Hai Ha IP and mill factories desk research for Gap Inc - check data (Trang/Anh/Tung)\n- Prep for Terviva engagement on pongamia (Tung/Hang)\n- PUR cocoa carbon project discussion (Tung/Hang)","- Cont. TCB tool and data review for next steps (Tung/Hang/Trang/Anh)\n- Cont. prelim brief to pivot SLL workplan using market reference from other countries/regions (Anh/Tung)\n- Resume data collection with BIDV for November reporting (Hang/Tung/Anh)\n","- Modelling update for implication of 2-part tariff on solar+storage optimization (Cong/Tung)\n- Cont. review IP portfolio under KBC and data extraction (Trang/Anh/Tinh)\n- Brainstorm and draft joint venture agreement with KBC (Marc/Michelle/Rob/all)\n","- Update monthly workplan sheet using new proposal (Hang/Trang/Tung)\n- Cont engage with DAE with revised proposal and MOU (Hang/Tung)","- Review new SOW and draft proposal for CEBA (Michelle/Anh/Hang/Trang)\n- Online Academy translation validation (Anh/Trang/Tinh)\n- Review thesis workplan and draft presentation (Tinh/Tung)","- Review offers from CocoSolar and Entoria (Cong/Anh)\n- Engage Viettel Construction introduced by Hue REI (Trang/Anh)\n- Coordinate with Jinquan for next steps (Anh/Cong)",,,,,,,,,,,,,,,
+2025-10-20,"- Carbon market training (Anh/Hang/Trang)\n- CFE 24/7 SG workshop (Erik)\n- Pickleball idea - frisbee ","- Review data request for modelling and send Ecplx (Tung/Cong/Rob)\n- Improve modelling, reporting and analysis for Emivest (Cong/Tung/Rob/Anh)\n- Start early work on Ecplx modelling and reporting (Cong/Anh/Tung)\n","- Terviva prep (Tung)\n- GAP call \n- Next steps with Amaccao/Seraphinn - site visit and data request (Tung/Hang)\n- Cont. carbon project document RAG/wrapper approach (Tinh/Aiden/Hang)\n","- Prelim brief to pivot SLL workplan using market reference from other countries/regions (Anh/Tung)\n- TCB tool and data review for next steps (Tung/Hang/Trang/Anh)\n","- Cont. Tinh weekly workplan for FMP thesis (Tinh/Tung)\n- Review IP portfolio under KBC and recommend top 3-4 IPs or tenants for further engagement and data request (Trang/Cong/Rob/Michelle)\n- IP Data Extraction (Trang/Anh)\n","- Confirm next steps with KBC - Aus visit, MOU (Tung/Hang)\n- Engage with DAE with revised proposal and official dispatch (Hang/Tung)\n- Hai Phong Leaders' work schedule when training abroad","- Support Corrina with 6-months check in (Anh/Trang/Tung)\n- Further support for online Academy this week (Anh/Trang/Tinh) ","- Share i-RECs service or vendor list with Hue REI (Anh/Trang/Hang/Lauren)\n- Resolve questions/ideas from George Jinquan (Cong/Rob/Tung)\n- Follow up with CocoSolar and Entoria (Trang/Anh/Cong)",,,,,,,,,,,,,,,
+2025-10-13,"- EAVCED training DPPA (5&6/11) (Trang/Cong/Tung)\n- DFAT workshop\n- HN 7th November (Tung)\n","- Review draft report for Emivest (Cong/Tung/Rob/Anh)\n- Reconnect with Ecoplexus for meeting arrangement (Tung)\n- Request Ecplx data for modelling (Cong/Tung)\n","- Amazon Device energy audit request discussion - outsource staff, personnel cert - MOIT (all)\n- Seraphinn/Amaccao meeting (Hang/Aiden/Tung)\n- GAP proposal (Michelle/Cong/Rob/Tung)\n- Cont. carbon project document RAG/wrapper approach (Tinh/Aiden/Hang)","- Review updated tool for further sharing (Tung/Hang)\n- Resume data collection and review for upcoming draft GHG assessment report (Hang/Trang/Anh)\n- Brainstorm ideas to pivot SLL workplan using market reference from other countries/regions (Anh/Tung)","- Complete pitchdeck and share with KBC (Marc/Rob/Cong/Michelle)\n- Tinh weekly workplan for FMP thesis (Tinh/Tung)\n","- Finalize ENG and VIE proposal for sharing with KBC (Michelle/Marc/Hang/Trang)\n- Draft MOU for Hai Phong based on proposal (Hang/Trang)\n- Follow up with KBC and Saigontel on next steps (Tung/Hang)\n","- Support with translation (Anh/Trang)\n- Support with 6-month process (Anh/Trang)\n- Review future retail tariff brief and 2-part pricing structure (Tung/Trang/Cong) ","- REI request for i-RECs service or vendor list (Anh/Trang/Lauren)\n- Coordinate next steps with Jinquan and others (Anh/Cong/Trang)",,,,,,,,,,,,,,,
+2025-10-06,"- BKK update\n- Coworking space (Trang/Tung)\n- DFAT carbon presentation (Hang/Lauren/Tung)","- Cont. draft report for Emivest (Anh/Cong/Tung)\n- Cont. engage Ecoplexus for project data and feedback (Tung/Cong)\n- FMP thesis update and review (Tinh/Tung/Cong/Rob)\n- Introduce STB Giga to PHL team (Cong)","- Discuss internally on WtE Doxaco and possibly Seraphinn project (Hang/Marc/Aiden)\n- Carbon project document RAG/wrapper approach (Tinh/Aiden/Hang)\n","- Revise and update financed emission tool with BIDV feedback (Trang/Hang)\n","- KBC pitch deck near completion - stats, graphs, visual (Michelle/Cong/Rob/Tung/Marc)","- Finalize proposal for internal sharing -  language, carbon, Tara, Josh (Tung/Hang/Marc)\n",- 6-month follow up,"- Summarize meeting outcomes for REI and others (Anh/Cong/Trang)\n- Review and discuss new offer from SmartSolar (Cong/Anh/Tung/Rob)\n",,,,,,,,,,,,,,,
+2025-09-29,"- BPP Showcase in CanTho\n","- Progress update presentation for Tara (Anh/Cong/Trang)\n- Draft report for Emivest (Anh/Cong/Tung)\n- FMP thesis update and review (Tinh/Tung/Cong/Rob)\n- Discuss BESS model with Ecoplexus and test project data (Cong/Tung/Anh)\n","- KBC pitch deck sharing - IP landscape; KBC opportunity (Cong/Aiden/Rob/Marc)\n- VIOT WtE project survey (Hang/Tung/Aiden)\n","- Progress update presentation for Tara (Hang/Anh/Trang)\n- Discuss request from BIDV - call Linh (Hang/Tung/others)\n- Finalize and submit Scope 1& 2 report for BIDV (Hang/Tung/Anh)",,"- Next steps with Hai Phong, DAE and KBC (Hang/Marc/Tung/KBC)\n","- Share photos and materials with brand reps - Nike, lululemon, REI (Anh/Trang)\n- [delayed] Digital Content Translation Review (Anh/Trang/Tinh)\n- Draft future retail electricity price (Trang/Tinh)",- Support meeting between Jinquan and SmartSolar (Cong/Anh/Trang),"- Review sensitive content for public version (Anh/Trang/Tung)\n- Share public version (Anh/Trang/Tung)",,,,,,,,,,,,,,
+2025-09-22,"- Tara catch up timing (Tung)\n- KBC Data Center POC follow up (Tung)\n- Tung on leave Wed, Fri","- Select one btm site for reporting (Cong/Tung/Anh)\n- Connect with Hien and Ecoplexus technical team in Turkey for BESS model feedback (Cong/Tung/Rob)","- UNDP proposal follow up (Tung/Michelle/Lauren)\n- KBC pitch deck finalizing - IP landscape; KBC opportunity (Cong/Aiden/Rob/Marc)\n- WtE carbon and data request form follow up (Marc/Hang/Aiden)\n- Retail price, FMP, RAG & supply chain data projects (Tinh/Trang/Aiden)","- Follow up with BIDV on training date (Hang/Tung/Anh)\n",,"- Follow up with DAE and Mr Duong for next step with Hai Phong (Hang/Tung)\n","-Linkedin post (Anh/Lauren) \n-CEBA post-event emails: facilitators-speakers-participants","- Review offer from SmartSolar (Cong/Rob/Anh)\n","- Slide for Bangkok Climate Week (Anh/Trang/Tung)\n- Review sensitive content for public version (Anh/Trang/Tung)",,,,,,,,,,,,,,
+2025-09-15,"- Retail price, FMP, RAG & supply chain data projects (Tinh/Trang/Aiden)","- Check in with Ecoplexus on model feedback (Cong/Tung)\n- Translate and review Vinergo model (Trang/Cong/Rob)","- Quick note/email recap GEAPP event and share materials (Cong/Anh)\n- Big picture KBC pitch deck drafting (all)\n","- Follow up with BIDV on financed emission calculations (Hang/Trang/Tung)\n",,- Follow up with KBC on update for Hai Phong (Tung) ,"- Print with VAT (Trang/Tung)\n- Finalize logistics - ? (Anh/Trang)\n- Finalize content and translation (Anh/all)\n- Prep for video interview ",- Update Tsheets with recent hours for REI (Cong/Anh),,,,,,,,,,,,,,,
+2025-09-08,"- Marketing slidedeck input (Trang/Hang)\n","- Check in with Ecoplexus on model feedback (Cong/Tung)\n","- Brainstorm industrial park project (Marc/Cong/Tung)\n- KBC DC deck sharing (Tung)\n- Follow up lululemon if no response (Tung)\n- Gather BESS insights during GEAPP event (Cong/Anh)","- Share the Scope 1&2 tool (instruction and survey form) to TCB (Hang/Tung/Trang)\n- Share financed emission tool with BIDV (Hang/Tung/others)\n- Prepare for BIDV financed emission tool (Tinh/Trang/Hang)",,- Follow up with KBC on update for Hai Phong (Tung) ,"- Send confirmation email (Trang/Anh)\n- Finalize slides - external, DPPA (Anh/Tung/Aiden/Cong)\n- Start slide translations (Anh/Trang/Tinh)\n- Logistics final - coordinators, tables, Slido, printing (Trang/Anh/Hang/others)","- Faciliate call and site visit for Jinquan (Trang/Anh/Cong)\n- Review offer from SmartSolar (Cong/Rob/Anh/Tung)\n- Share ENS Solution results (Aiden/Trang/Rob)",- Final update for report (Anh/Trang),,,,,,,,,,,,,,`;
+
+        // --- 3. LOGIC: PARSING & PROCESSING ---
+        function log(msg) {
+            const consoleEl = document.getElementById('debug-console');
+            const p = document.createElement('p');
+            p.className = 'border-b border-white/5 pb-1 mb-1';
+            p.textContent = `> ${msg}`;
+            consoleEl.appendChild(p);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function extractNames(text) {
+            if (!text) return [];
+            // Regex to find text inside parentheses
+            const regex = /\(([^)]+)\)/g;
+            let matches = [];
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                // Split by /, ,, or &
+                const names = match[1].split(/[\/,&]/);
+                names.forEach(n => {
+                    const cleanName = n.trim();
+                    if (ALLOWED_NAMES.has(cleanName)) {
+                        matches.push(cleanName);
+                    }
+                });
+            }
+            return matches;
+        }
+
+        function processData() {
+            log('Parsing CSV data...');
+            
+            const results = Papa.parse(CSV_CONTENT, {
+                header: true,
+                skipEmptyLines: true
+            });
+
+            log(`Parsed ${results.data.length} rows.`);
+
+            const timeData = [];
+            const dates = new Set();
+
+            results.data.forEach((row, index) => {
+                const date = row['Date'];
+                if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) return; // Skip invalid dates
+
+                dates.add(date);
+                
+                // Get all connections for this date
+                const dailyConnections = [];
+
+                // Iterate through all columns except Date
+                Object.keys(row).forEach(key => {
+                    if (key === 'Date') return;
+                    
+                    const cellContent = row[key];
+                    const namesInTask = extractNames(cellContent);
+
+                    // Create pairwise connections (cliques)
+                    if (namesInTask.length > 1) {
+                        for (let i = 0; i < namesInTask.length; i++) {
+                            for (let j = i + 1; j < namesInTask.length; j++) {
+                                // Sort to ensure A-B is same as B-A
+                                const pair = [namesInTask[i], namesInTask[j]].sort();
+                                dailyConnections.push(pair);
+                            }
+                        }
+                    }
+                });
+
+                timeData.push({
+                    date: date,
+                    connections: dailyConnections
+                });
+            });
+
+            // Sort by date ASC
+            timeData.sort((a, b) => new Date(a.date) - new Date(b.date));
+            STATE.parsedData = timeData;
+            STATE.uniqueDates = timeData.map(d => d.date);
+
+            log(`Timeline created: ${STATE.uniqueDates.length} weeks.`);
+            
+            // Init Slider
+            const slider = document.getElementById('timeline-slider');
+            slider.max = STATE.uniqueDates.length - 1;
+            
+            updateVisualization(0);
+        }
+
+        function updateVisualization(limitIndex) {
+            const limitDate = STATE.uniqueDates[limitIndex];
+            document.getElementById('current-date-display').textContent = limitDate;
+
+            // Aggregate data from start up to limitIndex
+            const nodesMap = new Map(); // name -> count
+            const linksMap = new Map(); // "name1-name2" -> weight
+
+            let totalSynapses = 0;
+
+            for (let i = 0; i <= limitIndex; i++) {
+                const dayData = STATE.parsedData[i];
+                dayData.connections.forEach(pair => {
+                    const [source, target] = pair;
+                    
+                    // Update Nodes
+                    nodesMap.set(source, (nodesMap.get(source) || 0) + 1);
+                    nodesMap.set(target, (nodesMap.get(target) || 0) + 1);
+
+                    // Update Links
+                    const linkId = `${source}-${target}`;
+                    linksMap.set(linkId, (linksMap.get(linkId) || 0) + 1);
+                    totalSynapses++;
+                });
+            }
+
+            // Convert to Graph Format
+            const nodes = Array.from(nodesMap.entries()).map(([id, val]) => ({ id, val }));
+            const links = Array.from(linksMap.entries()).map(([key, weight]) => {
+                const [source, target] = key.split('-');
+                return { source, target, weight };
+            });
+
+            // Update DOM Stats
+            document.getElementById('stat-nodes').textContent = nodes.length;
+            document.getElementById('stat-links').textContent = links.length;
+
+            // Update Graph
+            Graph.graphData({ nodes, links });
+        }
+
+        // --- 4. VISUALIZATION CONFIG ---
+        function initGraph() {
+            log('Initializing Physics Engine...');
+            
+            Graph
+                .backgroundColor('#050a08')
+                // Enhanced HTML Label for hover
+                .nodeLabel(node => `
+                    <div style="
+                        background: rgba(5, 10, 8, 0.95); 
+                        backdrop-filter: blur(8px); 
+                        border: 1px solid rgba(13, 242, 128, 0.5); 
+                        padding: 12px 16px; 
+                        border-radius: 12px; 
+                        box-shadow: 0 0 30px rgba(13, 242, 128, 0.2); 
+                        pointer-events: none; 
+                        min-width: 140px;
+                        transform: translateY(-20px);
+                    ">
+                        <div style="
+                            color: #0df280; 
+                            font-weight: 700; 
+                            font-size: 18px; 
+                            font-family: 'Space Grotesk', sans-serif; 
+                            letter-spacing: 0.05em; 
+                            margin-bottom: 6px;
+                            text-shadow: 0 0 10px rgba(13, 242, 128, 0.4);
+                        ">${node.id}</div>
+                        
+                        <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 6px;">
+                            <span style="color: rgba(255,255,255,0.6); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;">Workload</span>
+                            <span style="color: #fff; font-size: 14px; font-family: monospace; font-weight: bold;">${node.val}</span>
+                        </div>
+                    </div>
+                `)
+                .nodeColor(() => '#0df280') // All nodes neon green
+                .nodeVal(node => Math.sqrt(node.val) * 2) // Scale size slightly non-linear
+                .nodeResolution(16) // Smooth spheres
+                .nodeOpacity(0.9)
+                
+                .linkLabel(link => `
+                    <div style="background: rgba(5, 10, 8, 0.9); border: 1px solid rgba(13, 242, 128, 0.3); padding: 8px 12px; border-radius: 8px; pointer-events: none;">
+                        <div style="color: rgba(255,255,255,0.8); font-size: 12px; font-family: 'Space Grotesk', sans-serif;">
+                            LINK STRENGTH: <span style="color: #0df280; font-weight: bold; font-family: monospace;">${link.weight}</span>
+                        </div>
+                    </div>
+                `)
+                .linkWidth(link => Math.sqrt(link.weight) * 0.5)
+                .linkDirectionalParticles(2) // Flow particles
+                .linkDirectionalParticleSpeed(d => d.weight * 0.001)
+                .linkColor(() => 'rgba(13, 242, 128, 0.4)')
+                
+                .d3Force('charge', null) // Custom charge below? No, let's stick to default first
+                .cooldownTicks(100);
+
+            // Add Bloom Effect manually via PostProcessing if we had ThreeJS access easily, 
+            // but for standalone, we rely on CSS glow and standard materials.
+            // Adjust camera slightly
+            Graph.cameraPosition({ x: 0, y: 0, z: 300 });
+        }
+
+        // --- 5. EVENT LISTENERS ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initGraph();
+            processData();
+            document.getElementById('log-status').textContent = 'Active';
+            document.getElementById('log-status').classList.add('animate-pulse');
+
+            const slider = document.getElementById('timeline-slider');
+            const playBtn = document.getElementById('play-btn');
+            const playIcon = document.getElementById('play-icon');
+
+            // Slider Input
+            slider.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value);
+                STATE.currentDateIndex = val;
+                updateVisualization(val);
+            });
+
+            // Play Logic
+            playBtn.addEventListener('click', () => {
+                STATE.isPlaying = !STATE.isPlaying;
+                
+                if (STATE.isPlaying) {
+                    playIcon.textContent = 'pause';
+                    playBtn.classList.add('bg-white', 'text-black');
+                    playBtn.classList.remove('bg-primary');
+                    
+                    STATE.playInterval = setInterval(() => {
+                        let nextVal = parseInt(slider.value) + 1;
+                        if (nextVal >= STATE.uniqueDates.length) {
+                            nextVal = 0; // Loop
+                        }
+                        slider.value = nextVal;
+                        STATE.currentDateIndex = nextVal;
+                        updateVisualization(nextVal);
+                    }, 200); // 200ms per week
+                } else {
+                    playIcon.textContent = 'play_arrow';
+                    playBtn.classList.add('bg-primary');
+                    playBtn.classList.remove('bg-white', 'text-black');
+                    clearInterval(STATE.playInterval);
+                }
+            });
+
+            // Resize Handler
+            window.addEventListener('resize', () => {
+                Graph.width(window.innerWidth);
+                Graph.height(window.innerHeight);
+            });
+        });
+
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
