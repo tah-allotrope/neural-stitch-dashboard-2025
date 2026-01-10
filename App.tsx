@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import ForceGraph3D from '3d-force-graph';
+import * as THREE from 'three';
 import { Play, Pause, Calendar, Search, X, Activity, Globe, Filter } from 'lucide-react';
 
 // --- DATA & CONFIG ---
@@ -252,15 +253,55 @@ export default function App() {
         myGraph
             .backgroundColor('#050a08')
             .nodeLabel((node: any) => `${node.id}: ${node.taskCount || 0} Tasks`) // TOOLTIP UPDATE
-            .nodeColor((node: any) => getStringColor(node.id)) // Dynamic Color
-            .nodeVal((node: any) => Math.sqrt(node.val) * 2)
+            .nodeThreeObject((node: any) => {
+                const group = new THREE.Group();
+                const radius = Math.sqrt(node.val) * 0.8;
+
+                // 1. Basic Sphere (Fallback Color)
+                const geometry = new THREE.SphereGeometry(radius, 16, 16);
+                const material = new THREE.MeshLambertMaterial({
+                    color: getStringColor(node.id),
+                    transparent: true,
+                    opacity: 0.9
+                });
+                const sphere = new THREE.Mesh(geometry, material);
+                group.add(sphere);
+
+                // 2. Texture Loading Logic
+                const textureLoader = new THREE.TextureLoader();
+                const imagePath = `/staff/${node.id}.webp`;
+
+                textureLoader.load(
+                    imagePath,
+                    (texture) => {
+                        // Success: Update material
+                        sphere.material.color.set(0xffffff);
+                        sphere.material.map = texture;
+                        sphere.material.needsUpdate = true;
+                    },
+                    undefined,
+                    () => {
+                        // Error: Keep fallback (already set to colored sphere)
+                        console.log(`Fallback for ${node.id}: Image not found.`);
+                    }
+                );
+
+                return group;
+            })
+            .nodeVal((node: any) => Math.sqrt(node.val) * 0.8)
             .nodeResolution(16)
             .nodeOpacity(1)
             .linkLabel(link => `Strength: ${link.weight}`)
-            .linkColor(() => 'rgba(255, 255, 255, 0.2)')
-            .linkWidth((link: any) => Math.sqrt(link.weight) * 0.5)
-            .linkDirectionalParticles(2)
-            .linkDirectionalParticleSpeed((d: any) => d.weight * 0.002)
+            .linkColor((link: any) => {
+                const opacity = 0.2 + (Math.min(link.weight, 10) / 10) * 0.6; // Scale 0.2 -> 0.8
+                return `rgba(255, 255, 255, ${opacity})`;
+            })
+            .linkWidth((link: any) => {
+                return 0.5 + Math.min(link.weight, 10) * 0.25; // Scale to ~3px
+            })
+            // 2. PARTICLE FLOW
+            .linkDirectionalParticles((d: any) => Math.round(d.weight / 2)) // Frequency = Particles
+            .linkDirectionalParticleSpeed(0.005) // Slow, visible drift
             .onNodeClick((node: any) => {
                 const tasks: string[] = [];
                 for (let i = 0; i <= currentDateIndex; i++) {
@@ -275,6 +316,12 @@ export default function App() {
                     date: uniqueDates[currentDateIndex]
                 });
             });
+
+        // 3. PHYSICS CLUSTERING
+        myGraph.d3Force('link').distance((link: any) => {
+            // Short distance for high weight, Long for low weight
+            return 100 / (link.weight || 1);
+        });
 
         return () => {
             if (graphRef.current) graphRef.current.innerHTML = '';
