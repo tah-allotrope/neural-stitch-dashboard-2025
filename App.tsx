@@ -325,10 +325,21 @@ export default function App() {
                 // Centered Fan Math: Max spread 0.4 for tighter look
                 return ((index - (total - 1) / 2) / (total / 2 || 1)) * 0.2;
             })
-            .linkColor(() => 'rgba(0, 255, 255, 0.15)') // Even lower opacity for stability
+            .linkColor((link: any) => {
+                const t = Math.min(link.total / 15, 1);
+                const r = Math.round(t * 255);
+                const g = Math.round(255 - t * 235);
+                const b = Math.round(255 - t * 108);
+                return `rgba(${r}, ${g}, ${b}, 0.15)`;
+            })
             .linkWidth(0.5)
-            // PERFORMANCE: Disable particles for high-count stability
-            .linkDirectionalParticles(0)
+            // PERFORMANCE: Restored subtle particles (1 per link) for the "fired" effect
+            .linkDirectionalParticles(1)
+            .linkDirectionalParticleWidth(0.5)
+            .linkDirectionalParticleSpeed((link: any) => {
+                // Stronger connections = Faster firing (Base 0.005, Max 0.02)
+                return 0.005 + Math.min(link.total / 20, 1) * 0.015;
+            })
             .onNodeClick((node: any) => {
                 const tasks: string[] = [];
                 for (let i = 0; i <= currentDateIndex; i++) {
