@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import ForceGraph3D from '3d-force-graph';
 import * as THREE from 'three';
+import * as d3 from 'd3-force-3d';
 import { Play, Pause, Calendar, Search, X, Activity, Globe, Filter } from 'lucide-react';
 
 // --- DATA & CONFIG ---
@@ -25,6 +26,10 @@ const getStringColor = (str: string) => {
     // Lightness: 50% (Medium for visibility on black)
     return `hsl(${hue}, 75%, 50%)`;
 };
+
+// --- TEXTURE CACHE MANAGER ---
+const textureCache: Record<string, THREE.Texture> = {};
+const textureLoader = new THREE.TextureLoader();
 
 export default function App() {
     const graphRef = useRef<HTMLDivElement>(null);
@@ -166,6 +171,28 @@ export default function App() {
         setAllStaff(Array.from(globalStaffSet).sort());
     }, []);
 
+    // --- PRE-LOAD TEXTURES ---
+    useEffect(() => {
+        if (!allStaff.length) return;
+
+        allStaff.forEach(staff => {
+            if (textureCache[staff]) return; // Skip already loaded
+
+            const imagePath = `/staff/${staff}.webp`;
+            textureLoader.load(
+                imagePath,
+                (texture) => {
+                    textureCache[staff] = texture;
+                },
+                undefined,
+                () => {
+                    // Fail silently or log once
+                    // console.log(`Texture not available for ${staff}`);
+                }
+            );
+        });
+    }, [allStaff]);
+
     // --- GRAPH DATA CALC ---
     const graphData = useMemo(() => {
         if (!parsedData.length) return { nodes: [], links: [] };
@@ -178,58 +205,57 @@ export default function App() {
         // Let's stick to the previous cumulative logic but FILTER the result based on staff.
 
         const limitIndex = currentDateIndex;
-        const nodesMap = new Map<string, { val: number, taskCount: number }>(); // Track connection strength AND task count
-        const linksMap = new Map<string, number>();
+        const nodesMap = new Map<string, { val: number, taskCount: number }>();
+        const rawLinks: { source: string, target: string }[] = [];
 
-        // We accumulate data up to the current date
         for (let i = 0; i <= limitIndex; i++) {
             const dayData = parsedData[i];
 
-            // Accumulate connections
             dayData.connections.forEach((pair: string[]) => {
                 const [source, target] = pair;
-
-                // Update Node (Connection Strength)
                 const sNode = nodesMap.get(source) || { val: 0, taskCount: 0 };
                 const tNode = nodesMap.get(target) || { val: 0, taskCount: 0 };
-
                 nodesMap.set(source, { ...sNode, val: sNode.val + 1 });
                 nodesMap.set(target, { ...tNode, val: tNode.val + 1 });
 
-                const linkId = `${source}-${target}`;
-                linksMap.set(linkId, (linksMap.get(linkId) || 0) + 1);
+                rawLinks.push({ source, target });
             });
 
-            // Accumulate Tasks (Independent of connections)
             Object.keys(dayData.tasks).forEach(staff => {
                 const count = dayData.tasks[staff].length;
-                // Always get or create node
                 const node = nodesMap.get(staff) || { val: 0, taskCount: 0 };
-
-                // Add to map (allow isolated nodes)
-                // Boost val slightly by task count so they aren't size 0
                 nodesMap.set(staff, {
-                    val: node.val + (count * 0.1), // Base size from tasks
+                    val: node.val + (count * 0.1),
                     taskCount: node.taskCount + count
                 });
             });
         }
 
         let nodes = Array.from(nodesMap.entries()).map(([id, data]) => ({ id, val: data.val, taskCount: data.taskCount }));
-        let links = Array.from(linksMap.entries()).map(([key, weight]) => {
-            const [source, target] = key.split('-');
-            return { source, target, weight };
+
+        // Multi-Link Pre-processing: Calculate index and total per pair
+        const pairCounts: Record<string, number> = {};
+        const pairIndexMap: Record<string, number> = {};
+
+        // Filter out self-loops and invalid links
+        const validLinks = rawLinks.filter(l => l.source && l.target && l.source !== l.target);
+
+        validLinks.forEach(link => {
+            const id = [link.source, link.target].sort().join('-|-');
+            pairCounts[id] = (pairCounts[id] || 0) + 1;
+        });
+
+        let links = validLinks.map(link => {
+            const id = [link.source, link.target].sort().join('-|-');
+            const total = pairCounts[id];
+            const index = pairIndexMap[id] || 0;
+            pairIndexMap[id] = index + 1;
+            return { ...link, index, total };
         });
 
         // 2. Staff Filtering
         if (selectedStaff.length > 0) {
-            // Filter nodes: Only selected staff OR staff connected to them?
-            // "Display only those nodes" -> strict filter + their history.
             nodes = nodes.filter(n => selectedStaff.includes(n.id));
-
-            // Filter connections: Only if BOTH are in selected staff? 
-            // Or if ONE is in selected staff? usually "Both" for strict, "One" for egocentric.
-            // Let's go strict for "Display only those nodes".
             links = links.filter(l => selectedStaff.includes(l.source) && selectedStaff.includes(l.target));
         }
 
@@ -254,54 +280,37 @@ export default function App() {
             .backgroundColor('#050a08')
             .nodeLabel((node: any) => `${node.id}: ${node.taskCount || 0} Tasks`) // TOOLTIP UPDATE
             .nodeThreeObject((node: any) => {
-                const group = new THREE.Group();
                 const radius = Math.sqrt(node.val) * 0.8;
+                const texture = textureCache[node.id];
 
-                // 1. Basic Sphere (Fallback Color)
+                // Synchronous Rendering from Cache
                 const geometry = new THREE.SphereGeometry(radius, 16, 16);
                 const material = new THREE.MeshLambertMaterial({
-                    color: getStringColor(node.id),
+                    color: texture ? 0xffffff : getStringColor(node.id),
+                    map: texture || null,
                     transparent: true,
                     opacity: 0.9
                 });
-                const sphere = new THREE.Mesh(geometry, material);
-                group.add(sphere);
 
-                // 2. Texture Loading Logic
-                const textureLoader = new THREE.TextureLoader();
-                const imagePath = `/staff/${node.id}.webp`;
-
-                textureLoader.load(
-                    imagePath,
-                    (texture) => {
-                        // Success: Update material
-                        sphere.material.color.set(0xffffff);
-                        sphere.material.map = texture;
-                        sphere.material.needsUpdate = true;
-                    },
-                    undefined,
-                    () => {
-                        // Error: Keep fallback (already set to colored sphere)
-                        console.log(`Fallback for ${node.id}: Image not found.`);
-                    }
-                );
-
-                return group;
+                return new THREE.Mesh(geometry, material);
             })
             .nodeVal((node: any) => Math.sqrt(node.val) * 0.8)
             .nodeResolution(16)
             .nodeOpacity(1)
-            .linkLabel(link => `Strength: ${link.weight}`)
-            .linkColor((link: any) => {
-                const opacity = 0.2 + (Math.min(link.weight, 10) / 10) * 0.6; // Scale 0.2 -> 0.8
-                return `rgba(255, 255, 255, ${opacity})`;
+            .linkLabel((link: any) => `Connection ${link.index + 1} of ${link.total}`)
+            .linkCurvature((link: any) => {
+                const { index, total } = link;
+                if (total <= 1) return 0;
+                // Centered Fan Math: Max spread 0.5
+                // Normalize index to range [-0.25, 0.25]
+                return ((index - (total - 1) / 2) / (total / 2 || 1)) * 0.25;
             })
-            .linkWidth((link: any) => {
-                return 0.5 + Math.min(link.weight, 10) * 0.25; // Scale to ~3px
-            })
-            // 2. PARTICLE FLOW
-            .linkDirectionalParticles((d: any) => Math.round(d.weight / 2)) // Frequency = Particles
-            .linkDirectionalParticleSpeed(0.005) // Slow, visible drift
+            .linkColor(() => 'rgba(0, 255, 255, 0.2)') // Lower opacity for additive glow
+            .linkWidth(0.5) // Thin strings
+            // 2. PARTICLE FLOW (SUBTLE)
+            .linkDirectionalParticles(1)
+            .linkDirectionalParticleWidth(0.5)
+            .linkDirectionalParticleSpeed(0.005)
             .onNodeClick((node: any) => {
                 const tasks: string[] = [];
                 for (let i = 0; i <= currentDateIndex; i++) {
@@ -322,6 +331,12 @@ export default function App() {
             // Short distance for high weight, Long for low weight
             return 100 / (link.weight || 1);
         });
+
+        // 4. PHYSICS COLLISION
+        myGraph.d3Force('collide', d3.forceCollide((node: any) => {
+            // Radius + 4px gap
+            return Math.sqrt(node.val) * 0.8 + 4;
+        }));
 
         return () => {
             if (graphRef.current) graphRef.current.innerHTML = '';
