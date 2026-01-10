@@ -86,22 +86,62 @@ export default function App() {
                     const cellContent = row[key];
                     if (!cellContent) return;
 
-                    const regex = /\(([^)]+)\)/g;
-                    let match;
+                    // New Logic: 
+                    // 1. Target Description: Look for column/row containing task text (already iterating row keys)
+                    // 2. Regex Extraction: Text inside parentheses at the very end of the string.
+                    const regex = /\(([^)]+)\)\s*$/;
+                    const match = regex.exec(cellContent);
                     const namesInTask = new Set<string>();
 
-                    while ((match = regex.exec(cellContent)) !== null) {
-                        match[1].split(/[\/,&]/).forEach(n => {
-                            const cleanName = n.trim();
-                            // Allow any name found in the pattern, minimal filtering length > 1
-                            if (cleanName.length > 1) {
+                    if (match) {
+                        // 3. Split & Expand
+                        const rawNames = match[1].split('/');
+                        const VIETNAM_STAFF = ['Tung', 'Cong', 'Anh', 'Hang', 'Trang', 'Tinh'];
+
+                        rawNames.forEach(n => {
+                            let cleanName = n.trim();
+
+                            // 1. Special Case: Tinh-2Anh
+                            if (cleanName === 'Tinh-2Anh') {
+                                namesInTask.add('Tinh');
+                                namesInTask.add('Anh');
+                                return;
+                            }
+
+                            // 2. CRITICAL 'All' Rule
+                            if (cleanName.toLowerCase() === 'all') {
+                                VIETNAM_STAFF.forEach(staff => namesInTask.add(staff));
+                                return;
+                            }
+
+                            // 3. The Bouncer Validation
+                            // Blocklist
+                            const BLOCKLIST = ['local', 'others', 'kbc', 'pur', 'nuoa.io', 'scg cleanergy'];
+                            if (BLOCKLIST.includes(cleanName.toLowerCase())) return;
+
+                            // Length Check (< 20 chars)
+                            if (cleanName.length >= 20) return;
+
+                            // Number Check (no purely numeric strings, though CSV might produce string "15")
+                            if (/^\d+$/.test(cleanName)) return;
+
+                            // Symbol Check
+                            if (/[?;]/.test(cleanName)) return;
+
+                            // If it survives The Bouncer, let it in
+                            if (cleanName.length > 0) {
                                 namesInTask.add(cleanName);
-                                globalStaffSet.add(cleanName); // Collect globally
-                                if (!dailyTasks[cleanName]) dailyTasks[cleanName] = [];
-                                dailyTasks[cleanName].push(cellContent);
                             }
                         });
+
+                        // 4. Data Flattening & Cleanup
+                        namesInTask.forEach(name => {
+                            globalStaffSet.add(name);
+                            if (!dailyTasks[name]) dailyTasks[name] = [];
+                            dailyTasks[name].push(cellContent);
+                        });
                     }
+                    // 5. Cleanup: If no parentheses/names, skip (implied by if(match))
 
                     const namesArray = Array.from(namesInTask);
                     if (namesArray.length > 1) {
