@@ -31,6 +31,22 @@ const getStringColor = (str: string) => {
 const textureCache: Record<string, THREE.Texture> = {};
 const textureLoader = new THREE.TextureLoader();
 
+// --- PERFORMANCE: SHARED ASSETS ---
+const sharedSphereGeometry = new THREE.SphereGeometry(1, 16, 16);
+const materialCache: Record<string, THREE.MeshLambertMaterial> = {};
+const getSharedMaterial = (id: string, texture?: THREE.Texture) => {
+    const key = `${id}-${texture?.uuid || 'none'}`;
+    if (!materialCache[key]) {
+        materialCache[key] = new THREE.MeshLambertMaterial({
+            color: texture ? 0xffffff : getStringColor(id),
+            map: texture || null,
+            transparent: true,
+            opacity: 0.9
+        });
+    }
+    return materialCache[key];
+};
+
 export default function App() {
     const graphRef = useRef<HTMLDivElement>(null);
     const graphInstance = useRef<any>(null);
@@ -250,8 +266,11 @@ export default function App() {
             const total = pairCounts[id];
             const index = pairIndexMap[id] || 0;
             pairIndexMap[id] = index + 1;
+
+            // PERFORMANCE: Tighter Adaptive Capping
+            // Cap at 5 links per pair for high-frequency segments
             return { ...link, index, total };
-        });
+        }).filter(link => link.index < 5);
 
         // 2. Staff Filtering - STRICT MASKING
         if (selectedStaff.length === 0) {
@@ -285,34 +304,31 @@ export default function App() {
                 const radius = Math.sqrt(node.val) * 0.8;
                 const texture = textureCache[node.id];
 
-                // Synchronous Rendering from Cache
-                const geometry = new THREE.SphereGeometry(radius, 16, 16);
-                const material = new THREE.MeshLambertMaterial({
-                    color: texture ? 0xffffff : getStringColor(node.id),
-                    map: texture || null,
-                    transparent: true,
-                    opacity: 0.9
-                });
-
-                return new THREE.Mesh(geometry, material);
+                // PERFORMANCE: Use shared geometry and material cache
+                const mesh = new THREE.Mesh(sharedSphereGeometry, getSharedMaterial(node.id, texture));
+                mesh.scale.set(radius, radius, radius);
+                return mesh;
             })
             .nodeVal((node: any) => Math.sqrt(node.val) * 0.8)
             .nodeResolution(16)
             .nodeOpacity(1)
-            .linkLabel((link: any) => `Connection ${link.index + 1} of ${link.total}`)
+            .linkLabel((link: any) => {
+                const { index, total } = link;
+                if (total > 5) {
+                    return `Connection ${index + 1} of ${total} (Capped at 5 for Performance)`;
+                }
+                return `Connection ${index + 1} of ${total}`;
+            })
             .linkCurvature((link: any) => {
                 const { index, total } = link;
                 if (total <= 1) return 0;
-                // Centered Fan Math: Max spread 0.5
-                // Normalize index to range [-0.25, 0.25]
-                return ((index - (total - 1) / 2) / (total / 2 || 1)) * 0.25;
+                // Centered Fan Math: Max spread 0.4 for tighter look
+                return ((index - (total - 1) / 2) / (total / 2 || 1)) * 0.2;
             })
-            .linkColor(() => 'rgba(0, 255, 255, 0.2)') // Lower opacity for additive glow
-            .linkWidth(0.5) // Thin strings
-            // 2. PARTICLE FLOW (SUBTLE)
-            .linkDirectionalParticles(1)
-            .linkDirectionalParticleWidth(0.5)
-            .linkDirectionalParticleSpeed(0.005)
+            .linkColor(() => 'rgba(0, 255, 255, 0.15)') // Even lower opacity for stability
+            .linkWidth(0.5)
+            // PERFORMANCE: Disable particles for high-count stability
+            .linkDirectionalParticles(0)
             .onNodeClick((node: any) => {
                 const tasks: string[] = [];
                 for (let i = 0; i <= currentDateIndex; i++) {
@@ -334,11 +350,14 @@ export default function App() {
             return 100 / (link.weight || 1);
         });
 
-        // 4. PHYSICS COLLISION
-        myGraph.d3Force('collide', d3.forceCollide((node: any) => {
-            // Radius + 4px gap
+        // 3. WARM UP & COOLDOWN (PERFORMANCE)
+        myGraph.d3Force('link').distance(80);
+        myGraph.d3Force('collide', d3.forceCollide(node => {
             return Math.sqrt(node.val) * 0.8 + 4;
         }));
+
+        // Faster stabilization to reduce background CPU
+        myGraph.d3AlphaDecay(0.08);
 
         return () => {
             if (graphRef.current) graphRef.current.innerHTML = '';
@@ -413,7 +432,13 @@ export default function App() {
                             <Activity className="text-[#0df280] w-6 h-6" />
                             <div>
                                 {/* replaced text with logo */}
-                                <img src="/logo.png" className="h-[40px] w-auto" alt="Neural Sync" />
+                                <div className="flex items-center gap-4">
+                                    <img src="/logo.png" className="h-[40px] w-auto" alt="Neural Sync" />
+                                    <div className="flex flex-col">
+                                        <p className="text-[10px] text-[#0df280] font-mono">Nodes: {stats.nodes}</p>
+                                        <p className="text-[10px] text-[#0df280] font-mono">Links: {stats.links}</p>
+                                    </div>
+                                </div>
                                 <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Network HUD</p>
                             </div>
                         </div>
@@ -434,7 +459,7 @@ export default function App() {
                         />
                     </div>
 
-                    <div className="mb-2 flex flex-wrap gap-2">
+                    <div className="mb-2 flex flex-wrap gap-2 items-center">
                         {selectedStaff.map(name => (
                             <button
                                 key={name}
@@ -444,13 +469,21 @@ export default function App() {
                                 {name} <X className="w-3 h-3" />
                             </button>
                         ))}
-                        {selectedStaff.length > 0 ? (
-                            <button onClick={() => setSelectedStaff([])} className="text-[10px] text-gray-400 hover:text-white underline p-1">
+                    </div>
+
+                    <div className="flex gap-3 mb-3 border-t border-white/5 pt-2">
+                        <button
+                            onClick={handleSelectAll}
+                            className="text-[10px] text-[#0df280] hover:text-white border border-[#0df280]/30 px-2 py-1 rounded transition-colors font-bold uppercase tracking-wider"
+                        >
+                            Select All
+                        </button>
+                        {selectedStaff.length > 0 && (
+                            <button
+                                onClick={() => setSelectedStaff([])}
+                                className="text-[10px] text-gray-400 hover:text-white underline p-1"
+                            >
                                 Clear All
-                            </button>
-                        ) : (
-                            <button onClick={handleSelectAll} className="text-[10px] text-[#0df280] hover:text-white border border-[#0df280]/30 px-2 py-0.5 rounded transition-colors">
-                                Select All
                             </button>
                         )}
                     </div>
