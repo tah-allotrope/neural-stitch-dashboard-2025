@@ -12,19 +12,17 @@ import rawData from './raw_data.csv?raw';
 const CSV_CONTENT = rawData; // Keeping variable name for minimal diff, or just replace usage.
 
 // Color Palette
-const COLORS = [
-    "#FF007A", "#00FFFF", "#FFD700", "#FF4500", "#7FFF00",
-    "#00BFFF", "#9932CC", "#FF1493", "#00FA9A", "#FF6347",
-    "#1E90FF", "#DA70D6", "#FFFF00", "#00FF7F", "#FF69B4"
-];
-
-const getNodeColor = (id: string) => {
+// 2. High-Contrast Node Colors: String-to-HSL Hash
+const getStringColor = (str: string) => {
     let hash = 0;
-    for (let i = 0; i < id.length; i++) {
-        hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
-    const index = Math.abs(hash) % COLORS.length;
-    return COLORS[index];
+    // Hue: 0-360 (Full spectrum)
+    const hue = Math.abs(hash % 360);
+    // Saturation: 75% (High pop)
+    // Lightness: 50% (Medium for visibility on black)
+    return `hsl(${hue}, 75%, 50%)`;
 };
 
 export default function App() {
@@ -202,20 +200,17 @@ export default function App() {
             });
 
             // Accumulate Tasks (Independent of connections)
-            // Note: If a staff has a task but no connection, they might not appear in 'connections' loop.
-            // But usually valid names come from the same cells.
             Object.keys(dayData.tasks).forEach(staff => {
                 const count = dayData.tasks[staff].length;
+                // Always get or create node
                 const node = nodesMap.get(staff) || { val: 0, taskCount: 0 };
-                // Using max(1) for val so they show up even if solitary? 
-                // Or just keep val=0 if no connections? ForceGraph needs links usually?
-                // For now, let's assume nodes only appear if they have connections in this visualization 
-                // OR we can add them here.
-                // The current logic only adds nodes if they exist in a connection pair.
-                // Let's stick to that to avoid floating points unless desired.
-                if (nodesMap.has(staff)) {
-                    nodesMap.set(staff, { ...node, taskCount: node.taskCount + count });
-                }
+
+                // Add to map (allow isolated nodes)
+                // Boost val slightly by task count so they aren't size 0
+                nodesMap.set(staff, {
+                    val: node.val + (count * 0.1), // Base size from tasks
+                    taskCount: node.taskCount + count
+                });
             });
         }
 
@@ -257,7 +252,7 @@ export default function App() {
         myGraph
             .backgroundColor('#050a08')
             .nodeLabel((node: any) => `${node.id}: ${node.taskCount || 0} Tasks`) // TOOLTIP UPDATE
-            .nodeColor((node: any) => getNodeColor(node.id)) // Dynamic Color
+            .nodeColor((node: any) => getStringColor(node.id)) // Dynamic Color
             .nodeVal((node: any) => Math.sqrt(node.val) * 2)
             .nodeResolution(16)
             .nodeOpacity(1)
@@ -341,8 +336,9 @@ export default function App() {
                         <div className="flex items-center gap-3">
                             <Activity className="text-[#0df280] w-6 h-6" />
                             <div>
-                                <h1 className="text-lg font-bold tracking-wider">Neural<span className="text-[#0df280]">Sync</span></h1>
-                                <p className="text-[10px] text-gray-400 uppercase tracking-widest">Network HUD</p>
+                                {/* replaced text with logo */}
+                                <img src="/logo.png" className="h-[40px] w-auto" alt="Neural Sync" />
+                                <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Network HUD</p>
                             </div>
                         </div>
                         <div className="w-2 h-2 rounded-full bg-[#0df280] animate-pulse"></div>
@@ -386,7 +382,7 @@ export default function App() {
                                 onClick={() => toggleStaffSelection(name)}
                                 className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center gap-2 hover:bg-white/5 transition-colors ${selectedStaff.includes(name) ? 'bg-white/10 text-[#0df280]' : 'text-gray-300'}`}
                             >
-                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getNodeColor(name) }}></span>
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getStringColor(name) }}></span>
                                 {name}
                             </button>
                         ))}
@@ -433,7 +429,7 @@ export default function App() {
                     <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20">
                         <div>
                             <p className="text-xs text-[#0df280] uppercase tracking-widest mb-1">Personnel Record</p>
-                            <h2 className="text-3xl font-bold font-mono" style={{ color: getNodeColor(selectedNode.id) }}>{selectedNode.id}</h2>
+                            <h2 className="text-3xl font-bold font-mono" style={{ color: getStringColor(selectedNode.id) }}>{selectedNode.id}</h2>
                         </div>
                         <button
                             onClick={() => setSelectedNode(null)}
