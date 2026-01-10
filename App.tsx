@@ -45,7 +45,7 @@ export default function App() {
     const [isPlaying, setIsPlaying] = useState(false);
     const [selectedNode, setSelectedNode] = useState<{ id: string, tasks: string[], date: string } | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
-    const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
+    const [selectedStaff, setSelectedStaff] = useState<string[]>(['Anh', 'Cong', 'Hang', 'Tinh', 'Trang']);
 
     const [stats, setStats] = useState({ nodes: 0, links: 0 });
 
@@ -253,11 +253,13 @@ export default function App() {
             return { ...link, index, total };
         });
 
-        // 2. Staff Filtering
-        if (selectedStaff.length > 0) {
-            nodes = nodes.filter(n => selectedStaff.includes(n.id));
-            links = links.filter(l => selectedStaff.includes(l.source) && selectedStaff.includes(l.target));
+        // 2. Staff Filtering - STRICT MASKING
+        if (selectedStaff.length === 0) {
+            return { nodes: [], links: [] };
         }
+
+        nodes = nodes.filter(n => selectedStaff.includes(n.id));
+        links = links.filter(l => selectedStaff.includes(l.source) && selectedStaff.includes(l.target));
 
         return { nodes, links };
     }, [parsedData, currentDateIndex, selectedStaff]);
@@ -380,12 +382,24 @@ export default function App() {
         );
     };
 
+    const handleSelectAll = () => {
+        setSelectedStaff([...allStaff]);
+    };
+
     const filteredNames = allStaff.filter(n =>
         n.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
         <div className="relative w-full h-screen overflow-hidden text-white font-sans selection:bg-[#0df280] selection:text-black">
+            {/* Empty State Message */}
+            {graphData.nodes.length === 0 && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+                    <div className="glass-panel px-8 py-4 rounded-2xl border border-[#0df280]/20 backdrop-blur-md animate-pulse">
+                        <p className="text-[#0df280] font-mono text-lg tracking-widest uppercase">Select staff to view</p>
+                    </div>
+                </div>
+            )}
 
             {/* 3D Container */}
             <div ref={graphRef} className="absolute inset-0 z-0" />
@@ -430,9 +444,13 @@ export default function App() {
                                 {name} <X className="w-3 h-3" />
                             </button>
                         ))}
-                        {selectedStaff.length > 0 && (
+                        {selectedStaff.length > 0 ? (
                             <button onClick={() => setSelectedStaff([])} className="text-[10px] text-gray-400 hover:text-white underline p-1">
                                 Clear All
+                            </button>
+                        ) : (
+                            <button onClick={handleSelectAll} className="text-[10px] text-[#0df280] hover:text-white border border-[#0df280]/30 px-2 py-0.5 rounded transition-colors">
+                                Select All
                             </button>
                         )}
                     </div>
