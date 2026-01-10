@@ -65,6 +65,18 @@ export default function App() {
 
     const [stats, setStats] = useState({ nodes: 0, links: 0 });
 
+    // --- REFS FOR STALE CLOSURE FIX ---
+    const currentDateIndexRef = useRef(currentDateIndex);
+    const parsedDataRef = useRef(parsedData);
+
+    useEffect(() => {
+        currentDateIndexRef.current = currentDateIndex;
+    }, [currentDateIndex]);
+
+    useEffect(() => {
+        parsedDataRef.current = parsedData;
+    }, [parsedData]);
+
     // --- PARSING ---
     useEffect(() => {
         const results = Papa.parse(rawData, {
@@ -299,6 +311,7 @@ export default function App() {
 
         myGraph
             .backgroundColor('#050a08')
+            .showNavInfo(false) // Hide default nav info, we have our own
             .nodeLabel((node: any) => `${node.id}: ${node.taskCount || 0} Tasks`) // TOOLTIP UPDATE
             .nodeThreeObject((node: any) => {
                 const radius = Math.sqrt(node.val) * 0.8;
@@ -342,8 +355,12 @@ export default function App() {
             })
             .onNodeClick((node: any) => {
                 const tasks: string[] = [];
-                for (let i = 0; i <= currentDateIndex; i++) {
-                    const dayTasks = parsedData[i]?.tasks[node.id];
+                // Use Refs to avoid stale closure from graph initialization
+                const data = parsedDataRef.current;
+                const idx = currentDateIndexRef.current;
+
+                for (let i = 0; i <= idx; i++) {
+                    const dayTasks = data[i]?.tasks[node.id];
                     if (dayTasks) tasks.push(...dayTasks);
                 }
                 const uniqueTasks = Array.from(new Set(tasks));
@@ -351,7 +368,7 @@ export default function App() {
                 setSelectedNode({
                     id: node.id,
                     tasks: uniqueTasks,
-                    date: uniqueDates[currentDateIndex]
+                    date: uniqueDates[idx]
                 });
             });
 
@@ -446,8 +463,18 @@ export default function App() {
                                 <div className="flex items-center gap-4">
                                     <img src="/logo.png" className="h-[40px] w-auto" alt="Neural Sync" />
                                     <div className="flex flex-col">
-                                        <p className="text-[10px] text-[#0df280] font-mono">Nodes: {stats.nodes}</p>
-                                        <p className="text-[10px] text-[#0df280] font-mono">Links: {stats.links}</p>
+                                        <p
+                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
+                                            title="Node size correlates with the number of tasks completed."
+                                        >
+                                            Nodes: {stats.nodes}
+                                        </p>
+                                        <p
+                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
+                                            title="Pink color and particle speed correlate with the connection strength between two nodes."
+                                        >
+                                            Links: {stats.links}
+                                        </p>
                                     </div>
                                 </div>
                                 <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Network HUD</p>
@@ -516,6 +543,9 @@ export default function App() {
 
             {/* BOTTOM TIMELINE */}
             <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[90%] md:w-[600px] z-10">
+                <p className="text-center text-[10px] text-gray-500 uppercase tracking-widest mb-2">
+                    Left-click: rotate · Mouse-wheel: zoom · Right-click: pan · Click nodes to view tasks
+                </p>
                 <div className="glass-panel rounded-full px-6 py-4 flex items-center gap-6">
                     <button
                         onClick={() => setIsPlaying(!isPlaying)}
