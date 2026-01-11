@@ -467,8 +467,18 @@ export default function App() {
                                         />
                                     )}
                                     <div className="flex flex-col">
-                                        <p className="text-[10px] text-[#0df280] font-mono">Nodes: {stats.nodes}</p>
-                                        <p className="text-[10px] text-[#0df280] font-mono">Links: {stats.links}</p>
+                                        <p
+                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
+                                            title="Node size correlates with the total number of tasks completed."
+                                        >
+                                            Nodes: {stats.nodes}
+                                        </p>
+                                        <p
+                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
+                                            title="Neon pink color intensity and particle speed correlate with stronger connection frequency."
+                                        >
+                                            Links: {stats.links}
+                                        </p>
                                     </div>
                                 </div>
                                 <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Network HUD</p>
