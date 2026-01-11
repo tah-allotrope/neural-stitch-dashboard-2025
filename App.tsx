@@ -31,7 +31,7 @@ const STAFF_IMAGE_MAP: Record<string, string> = {
 
 const getStaffImagePath = (staffName: string): string => {
     const normalizedName = STAFF_IMAGE_MAP[staffName.toLowerCase()] || staffName;
-    return `/staff/${normalizedName}.webp`;
+    return `staff/${normalizedName}.webp`;
 };
 
 const getStringColor = (str: string) => {
@@ -485,7 +485,7 @@ export default function App() {
                                         <span className="text-xl font-bold text-[#0df280]">Neural Sync</span>
                                     ) : (
                                         <img
-                                            src="/logo.png"
+                                            src="logo.png"
                                             className="h-[40px] w-auto"
                                             alt="Neural Sync"
                                             onError={() => setLogoError(true)}
