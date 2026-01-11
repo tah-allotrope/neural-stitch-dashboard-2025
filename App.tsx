@@ -15,6 +15,25 @@ const CSV_CONTENT = rawData; // Keeping variable name for minimal diff, or just 
 
 // Color Palette
 // 2. High-Contrast Node Colors: String-to-HSL Hash
+// Staff name to image filename mapping (case-sensitive for Firebase)
+const STAFF_IMAGE_MAP: Record<string, string> = {
+    'aiden': 'Aiden',
+    'anh': 'Anh',
+    'cong': 'Cong',
+    'hang': 'Hang',
+    'marc': 'Marc',
+    'michelle': 'Michelle',
+    'rob': 'Rob',
+    'tinh': 'Tinh',
+    'trang': 'Trang',
+    'tung': 'Tung',
+};
+
+const getStaffImagePath = (staffName: string): string => {
+    const normalizedName = STAFF_IMAGE_MAP[staffName.toLowerCase()] || staffName;
+    return `/staff/${normalizedName}.webp`;
+};
+
 const getStringColor = (str: string) => {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -64,6 +83,7 @@ export default function App() {
     const [selectedStaff, setSelectedStaff] = useState<string[]>(['Anh', 'Cong', 'Hang', 'Tinh', 'Trang']);
 
     const [stats, setStats] = useState({ nodes: 0, links: 0 });
+    const [logoError, setLogoError] = useState(false);
 
     // --- REFS FOR STALE CLOSURE FIX ---
     const currentDateIndexRef = useRef(currentDateIndex);
@@ -206,7 +226,7 @@ export default function App() {
         allStaff.forEach(staff => {
             if (textureCache[staff]) return; // Skip already loaded
 
-            const imagePath = `/staff/${staff}.webp`;
+            const imagePath = getStaffImagePath(staff);
             textureLoader.load(
                 imagePath,
                 (texture) => {
@@ -461,7 +481,16 @@ export default function App() {
                             <div>
                                 {/* replaced text with logo */}
                                 <div className="flex items-center gap-4">
-                                    <img src="/logo.png" className="h-[40px] w-auto" alt="Neural Sync" />
+                                    {logoError ? (
+                                        <span className="text-xl font-bold text-[#0df280]">Neural Sync</span>
+                                    ) : (
+                                        <img
+                                            src="/logo.png"
+                                            className="h-[40px] w-auto"
+                                            alt="Neural Sync"
+                                            onError={() => setLogoError(true)}
+                                        />
+                                    )}
                                     <div className="flex flex-col">
                                         <p
                                             className="text-[10px] text-[#0df280] font-mono cursor-help"
