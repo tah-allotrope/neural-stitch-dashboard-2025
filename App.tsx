@@ -356,11 +356,11 @@ export default function App() {
                 const r = Math.round(t * 255);
                 const g = Math.round(255 - t * 235);
                 const b = Math.round(255 - t * 108);
-                return `rgba(${r}, ${g}, ${b}, 0.15)`;
+                return `rgba(${r}, ${g}, ${b}, 0.4)`;
             })
-            .linkWidth(0.5)
+            .linkWidth(1)
             .linkDirectionalParticles(1)
-            .linkDirectionalParticleWidth(0.5)
+            .linkDirectionalParticleWidth(1.5)
             .linkDirectionalParticleSpeed((link: any) => {
                 return 0.005 + Math.min(link.total / 20, 1) * 0.015;
             })
