@@ -103,6 +103,7 @@ export default function App() {
 
     const [stats, setStats] = useState({ nodes: 0, links: 0 });
     const [logoError, setLogoError] = useState(false);
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
     // --- REFS FOR STALE CLOSURE FIX ---
     const currentDateIndexRef = useRef(currentDateIndex);
@@ -448,9 +449,23 @@ export default function App() {
 
             <div ref={graphRef} className="absolute inset-0 z-0" />
 
-            {/* HEADER */}
-            <div className="absolute top-6 left-6 z-10 flex flex-col gap-4 max-h-[80vh]">
-                <div className="glass-panel p-5 rounded-2xl w-80 md:w-96">
+            {/* MOBILE TOGGLE BUTTON */}
+            <button
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="absolute top-4 left-4 z-50 md:hidden p-3 bg-[#0df280] text-black rounded-full shadow-lg hover:scale-110 transition-transform active:scale-95"
+            >
+                {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Filter className="w-6 h-6" />}
+            </button>
+
+            {/* HEADER & FILTER CONTAINER */}
+            <div className={`
+                absolute z-40 flex flex-col gap-4 transition-all duration-300 ease-in-out
+                ${isMobileMenuOpen
+                    ? 'top-16 left-4 right-4 bg-black/80 backdrop-blur-xl p-4 rounded-2xl border border-white/10 max-h-[85vh] overflow-y-auto'
+                    : 'hidden md:flex md:top-6 md:left-6 md:max-h-[80vh] md:bg-transparent md:backdrop-blur-none md:p-0 md:border-none md:overflow-visible'}
+            `}>
+                {/* 1. Title Card */}
+                <div className="glass-panel p-5 rounded-2xl w-full md:w-96 shrink-0">
                     <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
                             <Activity className="text-[#0df280] w-6 h-6" />
@@ -467,18 +482,8 @@ export default function App() {
                                         />
                                     )}
                                     <div className="flex flex-col">
-                                        <p
-                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
-                                            title="Node size correlates with the total number of tasks completed."
-                                        >
-                                            Nodes: {stats.nodes}
-                                        </p>
-                                        <p
-                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
-                                            title="Neon pink color intensity and particle speed correlate with stronger connection frequency."
-                                        >
-                                            Links: {stats.links}
-                                        </p>
+                                        <p className="text-[10px] text-[#0df280] font-mono">Nodes: {stats.nodes}</p>
+                                        <p className="text-[10px] text-[#0df280] font-mono">Links: {stats.links}</p>
                                     </div>
                                 </div>
                                 <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Network HUD</p>
@@ -488,8 +493,8 @@ export default function App() {
                     </div>
                 </div>
 
-                {/* FILTER */}
-                <div className="glass-panel p-4 rounded-2xl w-80 md:w-96">
+                {/* 2. Filter Panel */}
+                <div className="glass-panel p-4 rounded-2xl w-full md:w-96 shrink-0">
                     <div className="relative mb-3">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <input
@@ -536,25 +541,28 @@ export default function App() {
             </div>
 
             {/* BOTTOM TIMELINE */}
-            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[90%] md:w-[600px] z-10">
-                <p className="text-center text-[10px] text-gray-500 uppercase tracking-widest mb-2">
+            <div className={`absolute bottom-6 left-1/2 -translate-x-1/2 w-[95%] md:w-[600px] z-10 transition-opacity duration-300 ${isMobileMenuOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+
+                {/* Text instructions: HIDDEN on mobile (hidden), VISIBLE on desktop (md:block) */}
+                <p className="hidden md:block text-center text-[10px] text-gray-500 uppercase tracking-widest mb-2">
                     Left-click: rotate · Mouse-wheel: zoom · Right-click: pan · Click nodes to view tasks
                 </p>
-                <div className="glass-panel rounded-full px-6 py-4 flex items-center gap-6">
+
+                <div className="glass-panel rounded-full px-4 py-3 md:px-6 md:py-4 flex items-center gap-4 md:gap-6">
                     <button
                         onClick={() => setIsPlaying(!isPlaying)}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-white text-black' : 'bg-[#0df280] text-black hover:scale-110'}`}
+                        className={`w-8 h-8 md:w-10 md:h-10 shrink-0 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-white text-black' : 'bg-[#0df280] text-black hover:scale-110'}`}
                     >
-                        {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+                        {isPlaying ? <Pause className="w-3 h-3 md:w-4 md:h-4 fill-current" /> : <Play className="w-3 h-3 md:w-4 md:h-4 fill-current ml-0.5" />}
                     </button>
 
-                    <div className="flex-1">
-                        <div className="flex justify-between items-baseline mb-2">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-baseline mb-1 md:mb-2">
                             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Timeline</span>
-                            <span className="text-sm font-mono font-bold text-[#0df280]">{currentDate}</span>
+                            <span className="text-xs md:text-sm font-mono font-bold text-[#0df280] truncate ml-2">{currentDate}</span>
                         </div>
 
-                        <div className="relative h-6 flex items-center">
+                        <div className="relative h-4 md:h-6 flex items-center">
                             <input
                                 type="range"
                                 min="0"
