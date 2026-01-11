@@ -527,6 +527,9 @@ export default function App() {
 
             {/* BOTTOM TIMELINE */}
             <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[90%] md:w-[600px] z-10">
+                <p className="text-center text-[10px] text-gray-500 uppercase tracking-widest mb-2">
+                    Left-click: rotate · Mouse-wheel: zoom · Right-click: pan · Click nodes to view tasks
+                </p>
                 <div className="glass-panel rounded-full px-6 py-4 flex items-center gap-6">
                     <button
                         onClick={() => setIsPlaying(!isPlaying)}
@@ -534,22 +537,26 @@ export default function App() {
                     >
                         {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
                     </button>
+
                     <div className="flex-1">
                         <div className="flex justify-between items-baseline mb-2">
                             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Timeline</span>
                             <span className="text-sm font-mono font-bold text-[#0df280]">{currentDate}</span>
                         </div>
-                        <input
-                            type="range"
-                            min="0"
-                            max={uniqueDates.length - 1 || 0}
-                            value={currentDateIndex}
-                            onChange={(e) => setCurrentDateIndex(parseInt(e.target.value))}
-                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                            style={{
-                                background: `linear-gradient(to right, #0df280 0%, #0df280 ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) 100%)`
-                            }}
-                        />
+
+                        <div className="relative h-6 flex items-center">
+                            <input
+                                type="range"
+                                min="0"
+                                max={uniqueDates.length - 1 || 0}
+                                value={currentDateIndex}
+                                onChange={(e) => setCurrentDateIndex(parseInt(e.target.value))}
+                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                                style={{
+                                    background: `linear-gradient(to right, #0df280 0%, #0df280 ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) 100%)`
+                                }}
+                            />
+                        </div>
                     </div>
                 </div>
             </div>
