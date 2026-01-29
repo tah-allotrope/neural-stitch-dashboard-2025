@@ -1,414 +1,39 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import Papa from 'papaparse';
-import ForceGraph3D from '3d-force-graph';
-import * as THREE from 'three';
-import * as d3 from 'd3-force-3d';
-import { Play, Pause, Calendar, Search, X, Activity, Globe, Filter } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { X, Filter } from 'lucide-react';
 
-// --- DATA & CONFIG ---
-import rawData from './raw_data.csv?raw';
+import { useGraphData } from './hooks/useGraphData';
+import { useTexturePreload } from './hooks/useTexturePreload';
 
-const CSV_CONTENT = rawData;
-
-// --- IMAGE PATH LOGIC (FIREBASE FIX) ---
-// 1. Explicitly map lowercase names to exact filenames (Case-Sensitive)
-const STAFF_IMAGE_MAP: Record<string, string> = {
-    'aiden': 'Aiden',
-    'anh': 'Anh',
-    'cong': 'Cong',
-    'hang': 'Hang',
-    'marc': 'Marc',
-    'michelle': 'Michelle',
-    'rob': 'Rob',
-    'tinh': 'Tinh',
-    'trang': 'Trang',
-    'tung': 'Tung',
-    // Add known variations here if needed
-    'alnie': 'Alnie',
-    'bob': 'Bob',
-    'sve': 'Svetlana',
-    'svetlana': 'Svetlana'
-};
-
-// 2. Helper to Title Case (e.g. "ethan" -> "Ethan")
-const toTitleCase = (str: string) => {
-    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-};
-
-const getStaffImagePath = (staffName: string): string => {
-    // A. Check strict map first
-    const cleanName = staffName.trim().toLowerCase();
-    const mappedName = STAFF_IMAGE_MAP[cleanName];
-
-    if (mappedName) {
-        return `/staff/${mappedName}.webp`;
-    }
-
-    // B. Smart Fallback: Assume filename is TitleCase.webp
-    // This handles new staff without needing to edit the map every time
-    return `/staff/${toTitleCase(staffName)}.webp`;
-};
-
-const getStringColor = (str: string) => {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    // Hue: 0-360 (Full spectrum)
-    const hue = Math.abs(hash % 360);
-    // Saturation: 75% (High pop), Lightness: 50% (Medium)
-    return `hsl(${hue}, 75%, 50%)`;
-};
-
-// --- TEXTURE CACHE MANAGER ---
-// Defined outside component to persist across re-renders
-const textureCache: Record<string, THREE.Texture> = {};
-const textureLoader = new THREE.TextureLoader();
-
-// --- PERFORMANCE: SHARED ASSETS ---
-const sharedSphereGeometry = new THREE.SphereGeometry(1, 16, 16);
-const materialCache: Record<string, THREE.MeshLambertMaterial> = {};
-
-const getSharedMaterial = (id: string, texture?: THREE.Texture) => {
-    // Create a unique key based on ID and texture UUID
-    const key = `${id}-${texture?.uuid || 'none'}`;
-    if (!materialCache[key]) {
-        materialCache[key] = new THREE.MeshLambertMaterial({
-            color: texture ? 0xffffff : getStringColor(id),
-            map: texture || null,
-            transparent: true,
-            opacity: 0.9
-        });
-    }
-    return materialCache[key];
-};
+import { Header } from './components/Header';
+import { FilterPanel } from './components/FilterPanel';
+import { Timeline } from './components/Timeline';
+import { DetailsPanel } from './components/DetailsPanel';
+import { ForceGraph } from './components/ForceGraph';
 
 export default function App() {
-    const graphRef = useRef<HTMLDivElement>(null);
-    const graphInstance = useRef<any>(null);
-
-    // Data State
-    const [parsedData, setParsedData] = useState<any[]>([]);
-    const [uniqueDates, setUniqueDates] = useState<string[]>([]);
-    const [allStaff, setAllStaff] = useState<string[]>([]);
-
-    // Control State
+    // UI State
     const [currentDateIndex, setCurrentDateIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [selectedNode, setSelectedNode] = useState<{ id: string, tasks: string[], date: string } | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
-
-    // Default selection: Core team
     const [selectedStaff, setSelectedStaff] = useState<string[]>(['Anh', 'Cong', 'Hang', 'Tinh', 'Trang']);
-
-    const [stats, setStats] = useState({ nodes: 0, links: 0 });
     const [logoError, setLogoError] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-    // --- REFS FOR STALE CLOSURE FIX ---
-    const currentDateIndexRef = useRef(currentDateIndex);
-    const parsedDataRef = useRef(parsedData);
+    // Data Hooks
+    const {
+        uniqueDates,
+        allStaff,
+        graphData,
+        parsedDataRef
+    } = useGraphData(currentDateIndex, selectedStaff);
 
-    useEffect(() => {
-        currentDateIndexRef.current = currentDateIndex;
-    }, [currentDateIndex]);
+    useTexturePreload(allStaff);
 
-    useEffect(() => {
-        parsedDataRef.current = parsedData;
-    }, [parsedData]);
-
-    // --- PARSING ---
-    useEffect(() => {
-        const results = Papa.parse(rawData, {
-            header: true,
-            skipEmptyLines: true
-        });
-
-        // 1. Generate All Weeks of 2025 (Mondays)
-        const allWeeks: string[] = [];
-        let d = new Date('2025-01-06'); // First Monday of 2025
-        while (d.getFullYear() === 2025) {
-            allWeeks.push(d.toISOString().split('T')[0]);
-            d.setDate(d.getDate() + 7);
-        }
-
-        // 2. Map CSV Rows to Dates
-        const dataByDate = new Map();
-        results.data.forEach((row: any) => {
-            const date = row['Date'];
-            if (!date) return;
-            dataByDate.set(date, row);
-        });
-
-        const timeData: any[] = [];
-        const globalStaffSet = new Set<string>();
-
-        // 3. Populate Every Week
-        allWeeks.forEach(date => {
-            const row = dataByDate.get(date);
-            const dailyConnections: any[] = [];
-            const dailyTasks: Record<string, string[]> = {};
-
-            if (row) {
-                Object.keys(row).forEach(key => {
-                    if (key === 'Date') return;
-                    const cellContent = row[key];
-                    if (!cellContent) return;
-
-                    // Regex Extraction: Text inside parentheses at the very end.
-                    const regex = /\(([^)]+)\)\s*$/;
-                    const match = regex.exec(cellContent);
-                    const namesInTask = new Set<string>();
-
-                    if (match) {
-                        const rawNames = match[1].split('/');
-                        const VIETNAM_STAFF = ['Tung', 'Cong', 'Anh', 'Hang', 'Trang', 'Tinh'];
-
-                        rawNames.forEach(n => {
-                            let cleanName = n.trim();
-
-                            // Special Case: Tinh-2Anh
-                            if (cleanName === 'Tinh-2Anh') {
-                                namesInTask.add('Tinh');
-                                namesInTask.add('Anh');
-                                return;
-                            }
-
-                            // CRITICAL 'All' Rule
-                            if (cleanName.toLowerCase() === 'all') {
-                                VIETNAM_STAFF.forEach(staff => namesInTask.add(staff));
-                                return;
-                            }
-
-                            // The Bouncer Validation
-                            const BLOCKLIST = ['local', 'others', 'kbc', 'pur', 'nuoa.io', 'scg cleanergy', 'etc'];
-                            if (BLOCKLIST.includes(cleanName.toLowerCase())) return;
-                            if (cleanName.length >= 20) return;
-                            if (/^\d+$/.test(cleanName)) return;
-                            if (/[?;]/.test(cleanName)) return;
-
-                            if (cleanName.length > 0) {
-                                namesInTask.add(cleanName);
-                            }
-                        });
-
-                        namesInTask.forEach(name => {
-                            globalStaffSet.add(name);
-                            if (!dailyTasks[name]) dailyTasks[name] = [];
-                            dailyTasks[name].push(cellContent);
-                        });
-                    }
-
-                    const namesArray = Array.from(namesInTask);
-                    if (namesArray.length > 1) {
-                        for (let i = 0; i < namesArray.length; i++) {
-                            for (let j = i + 1; j < namesArray.length; j++) {
-                                const pair = [namesArray[i], namesArray[j]].sort();
-                                dailyConnections.push(pair);
-                            }
-                        }
-                    }
-                });
-            }
-
-            timeData.push({
-                date,
-                connections: dailyConnections,
-                tasks: dailyTasks
-            });
-        });
-
-        setParsedData(timeData);
-        setUniqueDates(allWeeks);
-        setAllStaff(Array.from(globalStaffSet).sort());
-    }, []);
-
-    // --- PRE-LOAD TEXTURES (FIXED) ---
-    useEffect(() => {
-        if (!allStaff.length) return;
-
-        allStaff.forEach(staff => {
-            if (textureCache[staff]) return; // Skip already loaded
-
-            // Use the Robust Path Logic Here
-            const imagePath = getStaffImagePath(staff);
-
-            textureLoader.load(
-                imagePath,
-                (texture) => {
-                    textureCache[staff] = texture;
-                },
-                undefined,
-                () => {
-                    console.warn(`Texture failed for ${staff} at ${imagePath}`);
-                    // Cache a "null" so we don't try to fetch again
-                    // textureCache[staff] = null; 
-                }
-            );
-        });
-    }, [allStaff]);
-
-    // --- GRAPH DATA CALC ---
-    const graphData = useMemo(() => {
-        if (!parsedData.length) return { nodes: [], links: [] };
-
-        const limitIndex = currentDateIndex;
-        const nodesMap = new Map<string, { val: number, taskCount: number }>();
-        const rawLinks: { source: string, target: string }[] = [];
-
-        for (let i = 0; i <= limitIndex; i++) {
-            const dayData = parsedData[i];
-
-            dayData.connections.forEach((pair: string[]) => {
-                const [source, target] = pair;
-                const sNode = nodesMap.get(source) || { val: 0, taskCount: 0 };
-                const tNode = nodesMap.get(target) || { val: 0, taskCount: 0 };
-                nodesMap.set(source, { ...sNode, val: sNode.val + 1 });
-                nodesMap.set(target, { ...tNode, val: tNode.val + 1 });
-
-                rawLinks.push({ source, target });
-            });
-
-            Object.keys(dayData.tasks).forEach(staff => {
-                const count = dayData.tasks[staff].length;
-                const node = nodesMap.get(staff) || { val: 0, taskCount: 0 };
-                nodesMap.set(staff, {
-                    val: node.val + (count * 0.1),
-                    taskCount: node.taskCount + count
-                });
-            });
-        }
-
-        let nodes = Array.from(nodesMap.entries()).map(([id, data]) => ({ id, val: data.val, taskCount: data.taskCount }));
-
-        // Multi-Link Pre-processing
-        const pairCounts: Record<string, number> = {};
-        const pairIndexMap: Record<string, number> = {};
-
-        const validLinks = rawLinks.filter(l => l.source && l.target && l.source !== l.target);
-
-        validLinks.forEach(link => {
-            const id = [link.source, link.target].sort().join('-|-');
-            pairCounts[id] = (pairCounts[id] || 0) + 1;
-        });
-
-        let links = validLinks.map(link => {
-            const id = [link.source, link.target].sort().join('-|-');
-            const total = pairCounts[id];
-            const index = pairIndexMap[id] || 0;
-            pairIndexMap[id] = index + 1;
-
-            return { ...link, index, total };
-        }).filter(link => link.index < 5); // Performance Cap
-
-        // Staff Filtering
-        if (selectedStaff.length === 0) {
-            return { nodes: [], links: [] };
-        }
-
-        nodes = nodes.filter(n => selectedStaff.includes(n.id));
-        links = links.filter(l => selectedStaff.includes(l.source) && selectedStaff.includes(l.target));
-
-        return { nodes, links };
-    }, [parsedData, currentDateIndex, selectedStaff]);
-
-    useEffect(() => {
-        setStats({ nodes: graphData.nodes.length, links: graphData.links.length });
-        if (graphInstance.current) {
-            graphInstance.current.graphData(graphData);
-        }
-    }, [graphData]);
-
-    // --- INIT GRAPH ---
-    useEffect(() => {
-        if (!graphRef.current) return;
-
-        const myGraph = (ForceGraph3D as any)()(graphRef.current);
-        graphInstance.current = myGraph;
-
-        myGraph
-            .backgroundColor('#050a08')
-            .showNavInfo(false)
-            .nodeLabel((node: any) => `${node.id}: ${node.taskCount || 0} Tasks`)
-            .nodeThreeObject((node: any) => {
-                const radius = Math.sqrt(node.val) * 0.8;
-                // Check cache for texture
-                const texture = textureCache[node.id];
-
-                const mesh = new THREE.Mesh(sharedSphereGeometry, getSharedMaterial(node.id, texture));
-                mesh.scale.set(radius, radius, radius);
-                return mesh;
-            })
-            .nodeVal((node: any) => Math.sqrt(node.val) * 0.8)
-            .nodeResolution(16)
-            .nodeOpacity(1)
-            .linkLabel((link: any) => {
-                const { index, total } = link;
-                return total > 5 ? `Link ${index + 1}/${total} (Capped)` : `Link ${index + 1}/${total}`;
-            })
-            .linkCurvature((link: any) => {
-                const { index, total } = link;
-                if (total <= 1) return 0;
-                return ((index - (total - 1) / 2) / (total / 2 || 1)) * 0.2;
-            })
-            .linkColor((link: any) => {
-                const t = Math.min(link.total / 15, 1);
-                const r = Math.round(t * 255);
-                const g = Math.round(255 - t * 235);
-                const b = Math.round(255 - t * 108);
-                return `rgba(${r}, ${g}, ${b}, 0.4)`;
-            })
-            .linkWidth(1)
-            .linkDirectionalParticles(1)
-            .linkDirectionalParticleWidth(1.5)
-            .linkDirectionalParticleSpeed((link: any) => {
-                return 0.005 + Math.min(link.total / 20, 1) * 0.015;
-            })
-            .onNodeClick((node: any) => {
-                const tasks: string[] = [];
-                const data = parsedDataRef.current;
-                const idx = currentDateIndexRef.current;
-
-                for (let i = 0; i <= idx; i++) {
-                    const dayTasks = data[i]?.tasks[node.id];
-                    if (dayTasks) tasks.push(...dayTasks);
-                }
-                const uniqueTasks = Array.from(new Set(tasks));
-
-                setSelectedNode({
-                    id: node.id,
-                    tasks: uniqueTasks,
-                    date: uniqueDates[idx]
-                });
-            });
-
-        // PHYSICS
-        myGraph.d3Force('link').distance((link: any) => 100 / (link.weight || 1));
-        myGraph.d3Force('collide', d3.forceCollide((node: any) => Math.sqrt(node.val) * 0.8 + 4));
-        myGraph.d3AlphaDecay(0.08);
-
-        return () => {
-            if (graphRef.current) graphRef.current.innerHTML = '';
-        };
-    }, []);
-
-    // --- RESIZE ---
-    useEffect(() => {
-        const handleResize = () => {
-            if (graphInstance.current) {
-                graphInstance.current
-                    .width(window.innerWidth)
-                    .height(window.innerHeight);
-            }
-        };
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-
-    // --- PLAY LOOP ---
+    // Play Loop
     useEffect(() => {
         let interval: any;
-        if (isPlaying) {
+        if (isPlaying && uniqueDates.length > 0) {
             interval = setInterval(() => {
                 setCurrentDateIndex(prev => {
                     const next = prev + 1;
@@ -422,16 +47,38 @@ export default function App() {
 
     const currentDate = uniqueDates[currentDateIndex] || 'Loading...';
 
-    // --- HELPER FUNCTIONS FOR UI ---
-    const toggleStaffSelection = (name: string) => {
+    // Callbacks
+    const toggleStaffSelection = useCallback((name: string) => {
         setSelectedStaff(prev =>
             prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
         );
-    };
+    }, []);
 
-    const handleSelectAll = () => {
+    const handleSelectAll = useCallback(() => {
         setSelectedStaff([...allStaff]);
-    };
+    }, [allStaff]);
+
+    const handleClearAll = useCallback(() => {
+        setSelectedStaff([]);
+    }, []);
+
+    const handleNodeClick = useCallback((node: any) => {
+        const tasks: string[] = [];
+        const data = parsedDataRef.current;
+        const idx = currentDateIndex;
+
+        for (let i = 0; i <= idx; i++) {
+            const dayTasks = data[i]?.tasks[node.id];
+            if (dayTasks) tasks.push(...dayTasks);
+        }
+        const uniqueTasks = Array.from(new Set(tasks));
+
+        setSelectedNode({
+            id: node.id,
+            tasks: uniqueTasks,
+            date: uniqueDates[idx]
+        });
+    }, [currentDateIndex, uniqueDates, parsedDataRef]);
 
     const filteredNames = allStaff.filter(n =>
         n.toLowerCase().includes(searchQuery.toLowerCase())
@@ -447,7 +94,7 @@ export default function App() {
                 </div>
             )}
 
-            <div ref={graphRef} className="absolute inset-0 z-0" />
+            <ForceGraph graphData={graphData} onNodeClick={handleNodeClick} />
 
             {/* MOBILE TOGGLE BUTTON */}
             <button
@@ -464,164 +111,47 @@ export default function App() {
                     ? 'top-16 left-4 right-4 bg-black/80 backdrop-blur-xl p-4 rounded-2xl border border-white/10 max-h-[85vh] overflow-y-auto'
                     : 'hidden md:flex md:top-6 md:left-6 md:max-h-[80vh] md:bg-transparent md:backdrop-blur-none md:p-0 md:border-none md:overflow-visible'}
             `}>
-                {/* 1. Title Card */}
-                <div className="glass-panel p-5 rounded-2xl w-full md:w-96 shrink-0">
-                    <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                            <Activity className="text-[#0df280] w-6 h-6" />
-                            <div>
-                                <div className="flex items-center gap-4">
-                                    {logoError ? (
-                                        <span className="text-xl font-bold text-[#0df280]">Neural Sync</span>
-                                    ) : (
-                                        <img
-                                            src="/logo.png"
-                                            className="h-[40px] w-auto"
-                                            alt="Neural Sync"
-                                            onError={() => setLogoError(true)}
-                                        />
-                                    )}
-                                    <div className="flex flex-col">
-                                        <p
-                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
-                                            title="Node size correlates with the total number of tasks completed."
-                                        >
-                                            Nodes: {stats.nodes}
-                                        </p>
-                                        <p
-                                            className="text-[10px] text-[#0df280] font-mono cursor-help"
-                                            title="Neon pink color intensity and particle speed correlate with stronger connection frequency."
-                                        >
-                                            Links: {stats.links}
-                                        </p>
-                                    </div>
-                                </div>
-                                <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Network HUD</p>
-                            </div>
-                        </div>
-                        <div className="w-2 h-2 rounded-full bg-[#0df280] animate-pulse"></div>
-                    </div>
-                </div>
+                <Header
+                    nodes={graphData.nodes.length}
+                    links={graphData.links.length}
+                    logoError={logoError}
+                    setLogoError={setLogoError}
+                />
 
-                {/* 2. Filter Panel */}
-                <div className="glass-panel p-4 rounded-2xl w-full md:w-96 shrink-0">
-                    <div className="relative mb-3">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                        <input
-                            type="text"
-                            placeholder="Filter Staff..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs focus:outline-none focus:border-[#0df280] transition-colors"
-                        />
-                    </div>
-
-                    <div className="mb-2 flex flex-wrap gap-2 items-center">
-                        {selectedStaff.map(name => (
-                            <button
-                                key={name}
-                                onClick={() => toggleStaffSelection(name)}
-                                className="flex items-center gap-1 text-[10px] bg-[#0df280] text-black px-2 py-1 rounded-full font-bold hover:bg-white transition-colors"
-                            >
-                                {name} <X className="w-3 h-3" />
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="flex gap-3 mb-3 border-t border-white/5 pt-2">
-                        <button onClick={handleSelectAll} className="text-[10px] text-[#0df280] border border-[#0df280]/30 px-2 py-1 rounded">Select All</button>
-                        {selectedStaff.length > 0 && (
-                            <button onClick={() => setSelectedStaff([])} className="text-[10px] text-gray-400 underline p-1">Clear All</button>
-                        )}
-                    </div>
-
-                    <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
-                        {filteredNames.map(name => (
-                            <button
-                                key={name}
-                                onClick={() => toggleStaffSelection(name)}
-                                className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center gap-2 hover:bg-white/5 transition-colors ${selectedStaff.includes(name) ? 'bg-white/10 text-[#0df280]' : 'text-gray-300'}`}
-                            >
-                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getStringColor(name) }}></span>
-                                {name}
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                <FilterPanel
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
+                    selectedStaff={selectedStaff}
+                    toggleStaffSelection={toggleStaffSelection}
+                    handleSelectAll={handleSelectAll}
+                    handleClearAll={handleClearAll}
+                    filteredNames={filteredNames}
+                />
             </div>
 
             {/* BOTTOM TIMELINE */}
             <div className={`absolute bottom-6 left-1/2 -translate-x-1/2 w-[95%] md:w-[600px] z-10 transition-opacity duration-300 ${isMobileMenuOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-
-                {/* Text instructions: HIDDEN on mobile (hidden), VISIBLE on desktop (md:block) */}
                 <p className="hidden md:block text-center text-[10px] text-gray-500 uppercase tracking-widest mb-2">
                     Left-click: rotate · Mouse-wheel: zoom · Right-click: pan · Click nodes to view tasks
                 </p>
 
-                <div className="glass-panel rounded-full px-4 py-3 md:px-6 md:py-4 flex items-center gap-4 md:gap-6">
-                    <button
-                        onClick={() => setIsPlaying(!isPlaying)}
-                        className={`w-8 h-8 md:w-10 md:h-10 shrink-0 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-white text-black' : 'bg-[#0df280] text-black hover:scale-110'}`}
-                    >
-                        {isPlaying ? <Pause className="w-3 h-3 md:w-4 md:h-4 fill-current" /> : <Play className="w-3 h-3 md:w-4 md:h-4 fill-current ml-0.5" />}
-                    </button>
-
-                    <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-baseline mb-1 md:mb-2">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Timeline</span>
-                            <span className="text-xs md:text-sm font-mono font-bold text-[#0df280] truncate ml-2">{currentDate}</span>
-                        </div>
-
-                        <div className="relative h-4 md:h-6 flex items-center">
-                            <input
-                                type="range"
-                                min="0"
-                                max={uniqueDates.length - 1 || 0}
-                                value={currentDateIndex}
-                                onChange={(e) => setCurrentDateIndex(parseInt(e.target.value))}
-                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                                style={{
-                                    background: `linear-gradient(to right, #0df280 0%, #0df280 ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) ${(currentDateIndex / (uniqueDates.length - 1)) * 100}%, rgba(255,255,255,0.1) 100%)`
-                                }}
-                            />
-                        </div>
-                    </div>
-                </div>
+                <Timeline
+                    isPlaying={isPlaying}
+                    setIsPlaying={setIsPlaying}
+                    currentDate={currentDate}
+                    currentDateIndex={currentDateIndex}
+                    setCurrentDateIndex={setCurrentDateIndex}
+                    maxIndex={uniqueDates.length - 1 || 0}
+                />
             </div>
 
             {/* DETAILS PANEL */}
             {selectedNode && (
-                <div className="absolute top-0 right-0 h-full w-full md:w-[400px] z-20 glass-panel border-l border-white/10 animate-slide-in flex flex-col">
-                    <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20">
-                        <div>
-                            <p className="text-xs text-[#0df280] uppercase tracking-widest mb-1">Personnel Record</p>
-                            <h2 className="text-3xl font-bold font-mono" style={{ color: getStringColor(selectedNode.id) }}>{selectedNode.id}</h2>
-                        </div>
-                        <button onClick={() => setSelectedNode(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                            <X className="w-6 h-6 text-gray-400 hover:text-white" />
-                        </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                        <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3 flex items-center gap-2">
-                            <Globe className="w-4 h-4 text-[#0df280]" /> Validated Skills / Tasks
-                        </h3>
-                        <div className="space-y-3">
-                            {selectedNode.tasks.map((task, idx) => (
-                                <div key={idx} className="p-3 bg-white/5 rounded border border-white/5 hover:border-[#0df280]/30 transition-colors">
-                                    <p className="text-xs leading-relaxed text-gray-300">{task.replace(/- /g, '').trim()}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
+                <DetailsPanel
+                    selectedNode={selectedNode}
+                    setSelectedNode={setSelectedNode}
+                />
             )}
         </div>
     );
 }
-
-const style = document.createElement('style');
-style.innerHTML = `
-  input[type=range]::-webkit-slider-thumb { box-shadow: 0 0 15px #0df280; transition: transform 0.1s; }
-  input[type=range]:active::-webkit-slider-thumb { transform: scale(1.3); }
-`;
-document.head.appendChild(style);

@@ -55,8 +55,12 @@ input[type=range]::-webkit-slider-thumb {
     background: #0df280;
     cursor: pointer;
     margin-top: -6px;
-    box-shadow: 0 0 10px rgba(13, 242, 128, 0.8);
+    box-shadow: 0 0 15px #0df280;
     border: 2px solid #050a08;
+    transition: transform 0.1s;
+}
+input[type=range]:active::-webkit-slider-thumb {
+    transform: scale(1.3);
 }
 input[type=range]::-webkit-slider-runnable-track {
     width: 100%;
